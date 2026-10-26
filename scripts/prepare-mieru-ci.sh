@@ -7,7 +7,10 @@ sw_vers
 df -h .
 git config --global url."https://github.com/".insteadOf git@github.com:
 git config --global url."https://gitlab.com/".insteadOf git@gitlab.com:
-git submodule update --init --depth=1
+git submodule update --init --depth=1 \
+    submodules/libtgvoip submodules/Sparkle submodules/telegram-ios \
+    submodules/rlottie submodules/tgcalls submodules/tg_owt \
+    submodules/libprisma submodules/regex submodules/tlottie
 git -C submodules/telegram-ios submodule update --init --depth=1 \
     third-party/dav1d/dav1d third-party/td/td \
     third-party/wallet-engine/wallet-engine third-party/mtproto-engine
