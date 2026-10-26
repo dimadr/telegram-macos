@@ -47,6 +47,8 @@
 
 ## Next operation
 
+Continuation after CI #5: the expanded cache path list changes the Actions cache version, so prefix keys alone cannot restore the old cache. The workflow now falls back to the exact CI #5 key with its original three paths, failing cheaply if neither cache exists. Expanded saves add headers, static archives, interfaces and ABI metadata. Xcode compilation caching is enabled with an explicit cached CAS directory and diagnostic remarks to validate reuse despite fresh checkout timestamps, without changing file timestamps or fabricating dependency records. Before/after inventory reports are uploaded with diagnostics. Actionlint, Node syntax/inventory and Bash syntax checks passed; effectiveness remains untested until the next run. Native paths/toolchain and the 45-minute limit are unchanged.
+
 1. Resume in a new session from this handoff. CI #5 analysis is complete: the remaining blocker is cold full-app Swift compilation exceeding the build time budget, without compiler errors. Do not repeat dependency/SDK research.
 2. Validate/resume using the saved Xcode 26.3 Swift/native caches and the expanded product output patterns. If unchanged sources rebuild again, inspect source timestamps/cache completeness before spending another full run. A changed SHA is required before new CI; the handoff was pushed with `[skip ci]` deliberately to stop this session without a new run. Remaining budget is 83 minutes.
 3. If the app builds, inspect linker/bundle/architecture/startup reports, retrieve the encrypted artifact, decrypt on E: and verify its SHA-256.

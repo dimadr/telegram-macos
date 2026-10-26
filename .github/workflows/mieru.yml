@@ -88,17 +88,38 @@ jobs:
           path: |
             .mieru-work/DerivedData/Build/Intermediates.noindex
             .mieru-work/DerivedData/ModuleCache.noindex
+            .mieru-work/DerivedData/CompilationCache.noindex
             .mieru-work/DerivedData/Build/Products/**/*.o
+            .mieru-work/DerivedData/Build/Products/**/*.a
+            .mieru-work/DerivedData/Build/Products/**/*.h
+            .mieru-work/DerivedData/Build/Products/**/*.modulemap
             .mieru-work/DerivedData/Build/Products/**/*.swiftmodule
+            .mieru-work/DerivedData/Build/Products/**/*.swiftinterface
             .mieru-work/DerivedData/Build/Products/**/*.swiftdoc
             .mieru-work/DerivedData/Build/Products/**/*.swiftsourceinfo
+            .mieru-work/DerivedData/Build/Products/**/*.abi.json
             packages/MieruTransport/.build
           key: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-${{ github.event.pull_request.head.sha || github.sha }}
           restore-keys: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-
+      - name: Recover CI 5 Swift cache when expanded cache is absent
+        if: steps.swift-cache.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .mieru-work/DerivedData/Build/Intermediates.noindex
+            .mieru-work/DerivedData/ModuleCache.noindex
+            packages/MieruTransport/.build
+          key: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-499204963f090387c46fcfd4438f9bfd12e32fc3
+          fail-on-cache-miss: true
       - name: Compile Swift transport
         run: DEVELOPER_DIR="$MIERU_APP_DEVELOPER_DIR" python3 scripts/run-mieru-ci.py swift-transport swift build --package-path packages/MieruTransport
+      - name: Inspect restored Swift cache
+        run: node scripts/inspect-mieru-cache.cjs restored
       - name: Build the complete arm64 app
         run: python3 scripts/run-mieru-ci.py app bash scripts/build-mieru-app.sh
+      - name: Inspect final Swift cache
+        if: always()
+        run: node scripts/inspect-mieru-cache.cjs final
       - name: Smoke-test app startup
         id: startup-smoke
         continue-on-error: true
@@ -151,9 +172,15 @@ jobs:
           path: |
             .mieru-work/DerivedData/Build/Intermediates.noindex
             .mieru-work/DerivedData/ModuleCache.noindex
+            .mieru-work/DerivedData/CompilationCache.noindex
             .mieru-work/DerivedData/Build/Products/**/*.o
+            .mieru-work/DerivedData/Build/Products/**/*.a
+            .mieru-work/DerivedData/Build/Products/**/*.h
+            .mieru-work/DerivedData/Build/Products/**/*.modulemap
             .mieru-work/DerivedData/Build/Products/**/*.swiftmodule
+            .mieru-work/DerivedData/Build/Products/**/*.swiftinterface
             .mieru-work/DerivedData/Build/Products/**/*.swiftdoc
             .mieru-work/DerivedData/Build/Products/**/*.swiftsourceinfo
+            .mieru-work/DerivedData/Build/Products/**/*.abi.json
             packages/MieruTransport/.build
           key: ${{ steps.swift-cache.outputs.cache-primary-key }}
