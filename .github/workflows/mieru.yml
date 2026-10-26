@@ -26,6 +26,9 @@ jobs:
       MIERU_TEST_RACE: "1"
       CMAKE_POLICY_VERSION_MINIMUM: "3.5"
       NSUnbufferedIO: "YES"
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      MIERU_NATIVE_DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      MIERU_APP_DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - name: Start the single CI budget
         run: echo "MIERU_CI_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
@@ -34,6 +37,13 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - run: mkdir -p "$GOCACHE" "$GOMODCACHE" "$GOTMPDIR" .mieru-work/logs
+      - name: Verify native and app toolchains
+        run: |
+          test -d "$MIERU_NATIVE_DEVELOPER_DIR"
+          test -d "$MIERU_APP_DEVELOPER_DIR"
+          xcodebuild -version | tee .mieru-work/logs/native-xcode.log
+          DEVELOPER_DIR="$MIERU_APP_DEVELOPER_DIR" xcodebuild -version | tee .mieru-work/logs/app-xcode.log
+          echo "MIERU_APP_XCODE_VERSION=$(DEVELOPER_DIR="$MIERU_APP_DEVELOPER_DIR" xcodebuild -version | head -1 | awk '{print $2}')" >> "$GITHUB_ENV"
       - uses: actions/setup-go@v5
         with:
           go-version: 1.26.x
@@ -79,10 +89,10 @@ jobs:
             .mieru-work/DerivedData/Build/Intermediates.noindex
             .mieru-work/DerivedData/ModuleCache.noindex
             packages/MieruTransport/.build
-          key: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ github.event.pull_request.head.sha || github.sha }}
-          restore-keys: mieru-swift-${{ runner.os }}-${{ runner.arch }}-
+          key: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-
       - name: Compile Swift transport
-        run: python3 scripts/run-mieru-ci.py swift-transport swift build --package-path packages/MieruTransport
+        run: DEVELOPER_DIR="$MIERU_APP_DEVELOPER_DIR" python3 scripts/run-mieru-ci.py swift-transport swift build --package-path packages/MieruTransport
       - name: Build the complete arm64 app
         run: python3 scripts/run-mieru-ci.py app bash scripts/build-mieru-app.sh
       - name: Smoke-test app startup

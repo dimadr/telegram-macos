@@ -9,6 +9,12 @@ package dependencies, so once the submodules are checked out the build is offlin
 
 The Telegramita Mieru integration targets Apple Silicon and macOS 12 or newer and
 requires Go 1.26.x. After initialising the submodules, use
+Xcode 26 or newer for the app: the current UI uses the macOS 26 glass APIs.
+CI uses Xcode 26.3 for Swift and the app, retaining validated native C/Objective-C/Rust
+libraries built with Xcode 16.4. `MIERU_APP_DEVELOPER_DIR` and
+`MIERU_NATIVE_DEVELOPER_DIR` select these toolchains independently.
+
+After initialising the submodules, use
 `bash scripts/build-mieru-app.sh` for an unsigned debug app. Framework preparation
 applies the pinned patches in `patches/mieru` before Swift package resolution and
 builds `native/mieru/build/libmieru.a` using the official v3.39.0 Client API with
