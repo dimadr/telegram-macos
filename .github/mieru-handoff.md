@@ -3,6 +3,7 @@
 ## State
 
 - Repository: `dimadr/telegram-macos`; branch `codex/mieru-client-api`; Draft PR #1.
+- Latest build/cache change: `5f4983e897f3b4544359a9e80c9383e0409af5ee`. CI #6: https://github.com/dimadr/telegram-macos/actions/runs/40354269306 . Both attempt 1 (job `121682373641`) and the user-authorized manual attempt 2 (job `121692176608`) failed to acquire a hosted arm64 runner. Attempt 2 ended at 2026-10-26 16:28:49 UTC. No workflow steps ran; runner ID was 0; no compilation or cache effectiveness checks occurred and no artifacts were created. Exact annotation: `The job was not acquired by Runner of type hosted even after multiple attempts`. GitHub also reported macOS arm64 capacity constraints. This is an infrastructure failure, not a source/compiler failure. No third attempt was started.
 - Last tested implementation HEAD: `499204963f090387c46fcfd4438f9bfd12e32fc3`. The handoff commit adds cache output patterns only, without changing app code.
 - CI #5: https://github.com/dimadr/telegram-macos/actions/runs/40335099051
 - Job: `121614418125`. Completed with build-budget exit 124. No compiler errors were found. Compilation reached UI packages including StarsUI, StickerSettingsUI and AffiliateUI; TelegramShare.appex was produced, but the main app was not completed.
@@ -14,6 +15,7 @@
 - Autonomous fixes, commits and pushes are authorized only on this branch; continue Draft PR #1.
 - Additional macOS CI budget for the autonomous phase: 180 minutes; 45 minutes maximum per job.
 - Completed autonomous runs used 97 minutes, rounded conservatively: CI #3 42 min, CI #4 13 min, CI #5 42 min. Remaining budget: 83 minutes. Previous CI #1/#2 predate this budget.
+- CI #6 attempts consumed 0 runner execution minutes (queue only, no assigned runner). Remaining budget is still 83 minutes; no job is active.
 - No master/other branch changes, merge, force-push, releases, user-data deletion or secret/certificate publication.
 - Stop at 50% context usage, safely save work and hand off. Do not start another CI after reaching that threshold. Leave an already running job alone.
 - Windows checkout, caches, artifacts and temporary files remain on D:/E:; existing workspace is `E:\Telegram_macOS`.
@@ -50,7 +52,7 @@
 Continuation after CI #5: the expanded cache path list changes the Actions cache version, so prefix keys alone cannot restore the old cache. The workflow now falls back to the exact CI #5 key with its original three paths, failing cheaply if neither cache exists. Expanded saves add headers, static archives, interfaces and ABI metadata. Xcode compilation caching is enabled with an explicit cached CAS directory and diagnostic remarks to validate reuse despite fresh checkout timestamps, without changing file timestamps or fabricating dependency records. Before/after inventory reports are uploaded with diagnostics. Actionlint, Node syntax/inventory and Bash syntax checks passed; effectiveness remains untested until the next run. Native paths/toolchain and the 45-minute limit are unchanged.
 
 1. Resume in a new session from this handoff. CI #5 analysis is complete: the remaining blocker is cold full-app Swift compilation exceeding the build time budget, without compiler errors. Do not repeat dependency/SDK research.
-2. Validate/resume using the saved Xcode 26.3 Swift/native caches and the expanded product output patterns. If unchanged sources rebuild again, inspect source timestamps/cache completeness before spending another full run. A changed SHA is required before new CI; the handoff was pushed with `[skip ci]` deliberately to stop this session without a new run. Remaining budget is 83 minutes.
+2. Resume only when macOS arm64 runner capacity is available. CI #6 has not tested the cache changes at all; do not alter source code to disguise the infrastructure failure. Its one manual retry was explicitly authorized by the user. After capacity recovers, obtain authorization for another identical-SHA retry if needed. Restore the saved Xcode 26.3 Swift/native caches using the compatibility fallback and expanded output patterns. Inspect the new `swift-cache-restored.json`, `swift-cache-final.json` and compilation-cache remarks before spending further runs. Do not fabricate timestamps or build records. This handoff is committed with `[skip ci]`, without starting another run. Remaining budget is 83 minutes.
 3. If the app builds, inspect linker/bundle/architecture/startup reports, retrieve the encrypted artifact, decrypt on E: and verify its SHA-256.
 4. One final code audit is still pending after compilation blockers are removed. Do not repeat the previous dependency investigation.
 5. No real Mieru server or Telegram test account was supplied. Authorization, messages, files/CDN, reconnection, observed fail-closed behavior, both engines at runtime and leak checks remain NOT TESTED until exercised. Do not collect real user credentials.
