@@ -88,6 +88,10 @@ jobs:
           path: |
             .mieru-work/DerivedData/Build/Intermediates.noindex
             .mieru-work/DerivedData/ModuleCache.noindex
+            .mieru-work/DerivedData/Build/Products/**/*.o
+            .mieru-work/DerivedData/Build/Products/**/*.swiftmodule
+            .mieru-work/DerivedData/Build/Products/**/*.swiftdoc
+            .mieru-work/DerivedData/Build/Products/**/*.swiftsourceinfo
             packages/MieruTransport/.build
           key: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-${{ github.event.pull_request.head.sha || github.sha }}
           restore-keys: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-
@@ -147,5 +151,9 @@ jobs:
           path: |
             .mieru-work/DerivedData/Build/Intermediates.noindex
             .mieru-work/DerivedData/ModuleCache.noindex
+            .mieru-work/DerivedData/Build/Products/**/*.o
+            .mieru-work/DerivedData/Build/Products/**/*.swiftmodule
+            .mieru-work/DerivedData/Build/Products/**/*.swiftdoc
+            .mieru-work/DerivedData/Build/Products/**/*.swiftsourceinfo
             packages/MieruTransport/.build
           key: ${{ steps.swift-cache.outputs.cache-primary-key }}
