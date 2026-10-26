@@ -38,7 +38,8 @@ jobs:
         with:
           go-version: 1.26.x
           cache: false
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: go-cache
         with:
           path: |
             .mieru-work/go-cache
@@ -57,7 +58,8 @@ jobs:
           python3 scripts/run-mieru-ci.py c-abi .mieru-work/abi-smoke
       - name: Prepare native app dependencies
         run: python3 scripts/run-mieru-ci.py dependencies bash scripts/prepare-mieru-ci.sh
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: native-cache
         with:
           path: |
             core-xprojects/**/build
@@ -95,3 +97,24 @@ jobs:
       - name: Preserve test failure status
         if: always() && steps.go-tests.outcome == 'failure'
         run: exit 1
+      - uses: actions/cache/save@v4
+        if: always() && steps.go-cache.outcome == 'success' && steps.go-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            .mieru-work/go-cache
+            .mieru-work/go-modules
+            native/mieru/build
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
+      - uses: actions/cache/save@v4
+        if: always() && steps.native-cache.outcome == 'success' && steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            core-xprojects/**/build
+            submodules/*/SharedHeaders
+            submodules/telegram-ios/submodules/*/SharedHeaders
+            submodules/telegram-ios/submodules/MTProtoRustEngine/MTProtoEngineFFI.xcframework
+            packages/WalletEngine/wallet_engineFFI.xcframework
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.rustup/toolchains
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
