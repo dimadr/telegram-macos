@@ -70,8 +70,17 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ~/.rustup/toolchains
-          key: mieru-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.gitmodules', 'core-xprojects/**', 'patches/mieru/**', 'scripts/framework-inputs.sh') }}
+          key: mieru-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.gitmodules', 'core-xprojects/**', 'patches/mieru/**', 'scripts/framework-inputs.sh', 'scripts/prepare-mieru-ci.sh') }}
           restore-keys: mieru-native-${{ runner.os }}-${{ runner.arch }}-
+      - uses: actions/cache/restore@v4
+        id: swift-cache
+        with:
+          path: |
+            .mieru-work/DerivedData/Build/Intermediates.noindex
+            .mieru-work/DerivedData/ModuleCache.noindex
+            packages/MieruTransport/.build
+          key: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: mieru-swift-${{ runner.os }}-${{ runner.arch }}-
       - name: Compile Swift transport
         run: python3 scripts/run-mieru-ci.py swift-transport swift build --package-path packages/MieruTransport
       - name: Build the complete arm64 app
@@ -82,9 +91,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: steps.app-artifact.outcome == 'success'
         with:
-          name: Telegramita-macOS-arm64-unsigned
+          name: Telegramita-macOS-arm64-encrypted
           path: |
-            .mieru-work/Telegramita-macOS-arm64-unsigned.zip
+            .mieru-work/Telegramita-macOS-arm64-unsigned.zip.enc
             .mieru-work/Telegramita-macOS-arm64-unsigned.sha256
           retention-days: 7
           compression-level: 0
@@ -118,3 +127,11 @@ jobs:
             ~/.cargo/git
             ~/.rustup/toolchains
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
+      - uses: actions/cache/save@v4
+        if: always() && steps.swift-cache.outcome == 'success' && steps.swift-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            .mieru-work/DerivedData/Build/Intermediates.noindex
+            .mieru-work/DerivedData/ModuleCache.noindex
+            packages/MieruTransport/.build
+          key: ${{ steps.swift-cache.outputs.cache-primary-key }}

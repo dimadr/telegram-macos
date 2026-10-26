@@ -14,5 +14,15 @@ for symbol in MieruClientNew MieruConnectionDial MieruConnectionRead MieruConnec
 done
 codesign -dv --verbose=2 "$APP" > .mieru-work/logs/codesign.log 2>&1 || true
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist"
-ditto -c -k --sequesterRsrc --keepParent "$APP" .mieru-work/Telegramita-macOS-arm64-unsigned.zip
+test -f "$APP/Contents/Info.plist"
+test -d "$APP/Contents/Resources"
+if find "$APP/Contents" -type f \( -name mieru -o -name mieru.exe -o -name libmieru.dylib -o -name libgo.dylib \) -print | grep .; then
+    echo "Unexpected external Mieru runtime in app bundle" >&2
+    exit 1
+fi
+mkdir -p .mieru-work/delivery
+mv "$APP" .mieru-work/delivery/Telegramita.app
+ditto -c -k --sequesterRsrc --keepParent .mieru-work/delivery/Telegramita.app .mieru-work/Telegramita-macOS-arm64-unsigned.zip
 shasum -a 256 .mieru-work/Telegramita-macOS-arm64-unsigned.zip > .mieru-work/Telegramita-macOS-arm64-unsigned.sha256
+node scripts/mieru-artifact.cjs seal .github/mieru-artifact-public.pem .mieru-work/Telegramita-macOS-arm64-unsigned.zip .mieru-work/Telegramita-macOS-arm64-unsigned.zip.enc
+rm .mieru-work/Telegramita-macOS-arm64-unsigned.zip
