@@ -85,6 +85,10 @@ jobs:
         run: python3 scripts/run-mieru-ci.py swift-transport swift build --package-path packages/MieruTransport
       - name: Build the complete arm64 app
         run: python3 scripts/run-mieru-ci.py app bash scripts/build-mieru-app.sh
+      - name: Smoke-test app startup
+        id: startup-smoke
+        continue-on-error: true
+        run: python3 scripts/run-mieru-ci.py startup node scripts/smoke-mieru-app.cjs
       - name: Verify linkage and package the app
         id: app-artifact
         run: python3 scripts/run-mieru-ci.py app-package bash scripts/package-mieru-ci-app.sh
@@ -104,7 +108,7 @@ jobs:
           path: .mieru-work/logs
           retention-days: 7
       - name: Preserve test failure status
-        if: always() && steps.go-tests.outcome == 'failure'
+        if: always() && (steps.go-tests.outcome == 'failure' || steps.startup-smoke.outcome == 'failure')
         run: exit 1
       - uses: actions/cache/save@v4
         if: always() && steps.go-cache.outcome == 'success' && steps.go-cache.outputs.cache-hit != 'true'
