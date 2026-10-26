@@ -29,3 +29,5 @@ core-xprojects/tlottie/build
 .swiftpm/
 .ci-build-logs/
 *.profraw
+/.mieru-work/
+/native/mieru/build/

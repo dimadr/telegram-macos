@@ -12,14 +12,37 @@ import GeneralRows
 import InputDataUI
 import AlertsUI
 import ProxyUtils
+import MieruTransport
+
+private func showMieruError(_ error: Error) {
+    let alert = NSAlert()
+    alert.messageText = (error as? MieruError ?? .invalidConfiguration).message
+    alert.runModal()
+}
+
+private func importMieruProfile() {
+    let panel = NSOpenPanel()
+    panel.allowedFileTypes = ["json"]
+    panel.allowsMultipleSelection = false
+    panel.begin { result in
+        guard result == .OK, let url = panel.url else { return }
+        do {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            guard let size = values.fileSize, size > 0, size <= 1024 * 1024 else { throw MieruError.invalidConfiguration }
+            try MieruRuntime.shared.importProfile(Data(contentsOf: url))
+        } catch { showMieruError(error) }
+    }
+}
 
 private let _p_id_enable: InputDataIdentifier = InputDataIdentifier("_p_id_enable")
 private let _p_id_add: InputDataIdentifier = InputDataIdentifier("_p_id_add")
 private let _id_calls: InputDataIdentifier = InputDataIdentifier("_id_calls")
 private struct ProxyListState : Equatable {
     let settings: ProxySettings
+    let mieru: MieruSnapshot
     init(settings: ProxySettings = ProxySettings.defaultSettings) {
         self.settings = settings
+        self.mieru = MieruRuntime.shared.snapshot
     }
     
     func withUpdatedSettings(_ settings: ProxySettings) -> ProxyListState {
@@ -68,6 +91,22 @@ private func proxyListSettingsEntries(_ state: ProxyListState, status: Connectio
     var sectionId: Int32 = 0
     var index: Int32 = 0
     
+    entries.append(.sectionId(sectionId, type: .normal))
+    sectionId += 1
+
+    entries.append(.custom(sectionId: sectionId, index: index, value: .string(nil), identifier: InputDataIdentifier("mieru_enable"), equatable: InputDataEquatable(state.mieru), comparable: nil, item: { size, stableId in
+        GeneralInteractedRowItem(size, stableId: stableId, name: "Mieru", type: .switchable(state.mieru.enabled), viewType: .firstItem, action: {
+            do { try MieruRuntime.shared.setEnabled(!state.mieru.enabled) }
+            catch { showMieruError(error) }
+        })
+    }))
+    index += 1
+    entries.append(.custom(sectionId: sectionId, index: index, value: .string(nil), identifier: InputDataIdentifier("mieru_import"), equatable: nil, comparable: nil, item: { size, stableId in
+        GeneralInteractedRowItem(size, stableId: stableId, name: "Import Mieru JSON…", nameStyle: blueActionButton, type: .none, viewType: .lastItem, action: importMieruProfile)
+    }))
+    index += 1
+    entries.append(.desc(sectionId: sectionId, index: index, text: .plain(state.mieru.status + "\nChanges apply after restart. While active, Mieru overrides proxy selection; calls, HTTP/WebSocket and sharing are disabled."), data: InputDataGeneralTextData(viewType: .textBottomItem)))
+    index += 1
     entries.append(.sectionId(sectionId, type: .normal))
     sectionId += 1
     
@@ -209,6 +248,11 @@ public func proxyListController(accountManager: AccountManager<TelegramAccountMa
     let updateState:(_ f:(ProxyListState)->ProxyListState)-> Void = { f in
         statePromise.set(stateValue.modify(f))
     }
+
+    let mieruObserver = NotificationCenter.default.addObserver(forName: MieruRuntime.changed, object: nil, queue: .main) { _ in
+        updateState { ProxyListState(settings: $0.settings) }
+    }
+    actionsDisposable.add(ActionDisposable { NotificationCenter.default.removeObserver(mieruObserver) })
     
     actionsDisposable.add((proxySettings(accountManager: accountManager) |> deliverOnPrepareQueue).start(next: { settings in
         updateState { current in

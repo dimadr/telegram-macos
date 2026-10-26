@@ -1,0 +1,75 @@
+name: Mieru validation
+
+on:
+  pull_request:
+    paths:
+      - native/mieru/**
+      - packages/MieruTransport/**
+      - patches/mieru/**
+      - scripts/*mieru*
+      - .github/workflows/mieru.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mieru-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  transport:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      GOCACHE: ${{ github.workspace }}/.mieru-work/go-cache
+      GOMODCACHE: ${{ github.workspace }}/.mieru-work/go-modules
+      GOTMPDIR: ${{ github.workspace }}/.mieru-work/go-tmp
+      TMPDIR: ${{ github.workspace }}/.mieru-work/tmp
+      GOTOOLCHAIN: local
+      MIERU_TEST_RACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.x
+          cache: false
+      - run: mkdir -p "$GOCACHE" "$GOMODCACHE" "$GOTMPDIR" "$TMPDIR" .mieru-work/logs
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .mieru-work/go-cache
+            .mieru-work/go-modules
+            native/mieru/build
+          key: mieru-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/mieru/**', 'patches/mieru/**') }}
+      - name: Go lifecycle and race tests
+        run: bash native/mieru/test.sh >.mieru-work/logs/go-tests.log 2>&1
+      - name: Build arm64 C archive and exercise ABI
+        run: |
+          test "$(uname -m)" = arm64
+          bash native/mieru/build.sh >.mieru-work/logs/go-build.log 2>&1
+          clang -I native/mieru/include native/mieru/tests/abi_smoke.c native/mieru/build/libmieru.a \
+            -framework Security -framework CoreFoundation -lresolv -lpthread -o .mieru-work/abi-smoke
+          .mieru-work/abi-smoke
+      - name: Prepare pinned MTProto sources
+        run: |
+          git submodule update --init --depth=1 submodules/telegram-ios >.mieru-work/logs/submodules.log 2>&1
+          git -C submodules/telegram-ios submodule update --init --depth=1 third-party/mtproto-engine >>.mieru-work/logs/submodules.log 2>&1
+          bash scripts/apply-mieru-patches.sh
+      - name: Compile Swift transport
+        run: swift build --package-path packages/MieruTransport >.mieru-work/logs/swift-build.log 2>&1
+      - name: Check added Swift host syntax
+        run: |
+          swiftc -frontend -parse submodules/telegram-ios/submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/MieruStreamHost.swift
+          swiftc -frontend -parse submodules/telegram-ios/submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/RustEngineRuntime.swift
+      - name: Rust routing regressions and FFI compilation
+        run: |
+          cd submodules/telegram-ios/third-party/mtproto-engine
+          cargo test -p mtproto-engine --test required_host --locked >"$GITHUB_WORKSPACE/.mieru-work/logs/rust-tests.log" 2>&1
+          cargo check -p mtproto-ffi --locked >"$GITHUB_WORKSPACE/.mieru-work/logs/rust-ffi.log" 2>&1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mieru-diagnostics
+          path: .mieru-work/logs
+          retention-days: 7

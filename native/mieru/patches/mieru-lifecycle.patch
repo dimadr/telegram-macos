@@ -1,0 +1,45 @@
+diff --git a/apis/client/client.go b/apis/client/client.go
+--- a/apis/client/client.go
++++ b/apis/client/client.go
+@@ -137,6 +137,10 @@ func (mc *mieruClient) DialContext(ctx context.Context, addr net.Addr) (net.Conn, er
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	stopCancellation := context.AfterFunc(ctx, func() {
++		conn.Close()
++	})
++	defer stopCancellation()
+ 	if mc.config.Profile.GetHandshakeMode() == appctlpb.HandshakeMode_HANDSHAKE_NO_WAIT {
+ 		req := &model.Request{}
+ 		if strings.HasPrefix(netAddrSpec.Network(), "tcp") {
+@@ -153,5 +157,13 @@ func (mc *mieruClient) DialContext(ctx context.Context, addr net.Addr) (net.Conn, er
+ 		return earlyConn, nil
+ 	}
+ 	_, err = internal.PostDialHandshake(conn, netAddrSpec)
+-	return conn, err
++	if err != nil {
++		conn.Close()
++		return nil, err
++	}
++	if err = ctx.Err(); err != nil {
++		conn.Close()
++		return nil, err
++	}
++	return conn, nil
+ }
+diff --git a/apis/internal/early_conn.go b/apis/internal/early_conn.go
+--- a/apis/internal/early_conn.go
++++ b/apis/internal/early_conn.go
+@@ -85,10 +85,11 @@ func (c *EarlyConn) Write(b []byte) (n int, err error) {
+ }
+ 
+ func (c *EarlyConn) Close() error {
++	err := c.Conn.Close()
+ 	c.handshakeOnce.Do(func() {
+ 		close(c.handshaked) // unblock Read() method
+ 	})
+-	return c.Conn.Close()
++	return err
+ }
+ 
+ // NeedHandshake returns true if the handshake has not been performed yet.

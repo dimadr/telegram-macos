@@ -1,0 +1,4 @@
+module MieruABI [system] {
+    header "../../../../native/mieru/include/mieru.h"
+    export *
+}

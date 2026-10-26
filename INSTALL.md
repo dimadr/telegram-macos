@@ -7,6 +7,25 @@ package dependencies, so once the submodules are checked out the build is offlin
 
 ## Requirements
 
+The Telegramita Mieru integration targets Apple Silicon and macOS 12 or newer and
+requires Go 1.26.x. After initialising the submodules, use
+`bash scripts/build-mieru-app.sh` for an unsigned debug app. Framework preparation
+applies the pinned patches in `patches/mieru` before Swift package resolution and
+builds `native/mieru/build/libmieru.a` using the official v3.39.0 Client API with
+two cancellation fixes. Unchanged native dependencies retain their build cache.
+`bash native/mieru/test.sh` runs the Go tests; `MIERU_TEST_RACE=1` adds the race detector.
+
+Import a Mieru profile or full client JSON in Settings → Proxy. Secrets are stored
+in Keychain. Enabling, disabling and replacing the profile take effect after an
+app restart. While active, calls, WebRTC, HTTP/WebSocket fallback, proxy probes,
+backup-IP HTTP requests and the share extension are disabled. A failed Mieru
+client does not select direct routing. Network integration and full app builds
+still require verification on macOS with a real Mieru server.
+
+The macOS source declares GPLv2 and Mieru declares GPLv3-or-later. Permission to
+distribute a combined binary has not been established; do not treat these build
+instructions as license clearance.
+
 - macOS on Apple Silicon or Intel. On Apple Silicon, Rosetta 2 is needed: the `tde2e`
   build compiles an x86_64 code-generation tool and runs it.
 - Full Xcode 16 or newer (Command Line Tools alone are not enough). Xcode 26 is what the

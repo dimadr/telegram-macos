@@ -9,6 +9,9 @@ arraylength=${#libs[@]}
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 ROOT_DIR="$( cd "$SCRIPT_DIR/.." >/dev/null && pwd )"
 
+bash "$SCRIPT_DIR/apply-mieru-patches.sh"
+bash "$ROOT_DIR/native/mieru/build.sh"
+
 python3 "$SCRIPT_DIR/prepare-telegram-api.py"
 
 . "$SCRIPT_DIR/framework-inputs.sh"

@@ -1,0 +1,253 @@
+diff --git a/crates/mtproto-engine/src/host_stream.rs b/crates/mtproto-engine/src/host_stream.rs
+index d77228d..f388eb9 100644
+--- a/crates/mtproto-engine/src/host_stream.rs
++++ b/crates/mtproto-engine/src/host_stream.rs
+@@ -1,6 +1,6 @@
+ use std::collections::{HashMap, VecDeque};
+ use std::io::{self, ErrorKind};
+-use std::sync::atomic::{AtomicU64, Ordering};
++use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+ use std::sync::{Arc, Mutex, RwLock};
+ 
+ use mio::{Token, Waker};
+@@ -94,12 +94,21 @@ struct Slot {
+ /// Every host stream of an engine, and the host that carries them.
+ #[derive(Default)]
+ pub(crate) struct HostStreams {
++    required: AtomicBool,
+     host: RwLock<Option<Arc<dyn StreamHost>>>,
+     next_id: AtomicU64,
+     slots: Mutex<HashMap<StreamId, Arc<Slot>>>,
+ }
+ 
+ impl HostStreams {
++    pub(crate) fn require_host(&self, required: bool) {
++        self.required.store(required, Ordering::SeqCst);
++    }
++
++    pub(crate) fn required(&self) -> bool {
++        self.required.load(Ordering::SeqCst)
++    }
++
+     pub(crate) fn set_host(&self, host: Option<Arc<dyn StreamHost>>) {
+         if let Ok(mut current) = self.host.write() {
+             *current = host;
+diff --git a/crates/mtproto-engine/src/lib.rs b/crates/mtproto-engine/src/lib.rs
+index 774f5a2..94278e1 100644
+--- a/crates/mtproto-engine/src/lib.rs
++++ b/crates/mtproto-engine/src/lib.rs
+@@ -295,6 +295,10 @@ impl Engine {
+ 
+     /// The host that opens streams the engine cannot open itself (TLS to Telegram Web's fronts with
+     /// the platform's TLS). Without one, routes that need it are not tried.
++    pub fn require_stream_host(&self, required: bool) {
++        self.inner.streams.require_host(required);
++    }
++
+     pub fn set_stream_host(&self, host: Option<Arc<dyn StreamHost>>) {
+         self.inner.streams.set_host(host);
+     }
+diff --git a/crates/mtproto-engine/src/session_carrier.rs b/crates/mtproto-engine/src/session_carrier.rs
+index 904f21f..d3331b4 100644
+--- a/crates/mtproto-engine/src/session_carrier.rs
++++ b/crates/mtproto-engine/src/session_carrier.rs
+@@ -24,7 +24,7 @@ impl SessionRuntime {
+             port: address.port,
+             tls_server_name: None,
+             alpn: Vec::new(),
+-            carrier: true,
++            carrier: self.setup.web_proxy(),
+         };
+         let pipe = self.host_streams.as_ref().and_then(|(streams, signal)| streams.open(&target, token, signal).ok());
+         let Some(pipe) = pipe else {
+diff --git a/crates/mtproto-engine/src/session_http.rs b/crates/mtproto-engine/src/session_http.rs
+index c1ab28f..a612604 100644
+--- a/crates/mtproto-engine/src/session_http.rs
++++ b/crates/mtproto-engine/src/session_http.rs
+@@ -340,6 +340,7 @@ impl SessionRuntime {
+         resolver: &mut dyn Resolve,
+         callbacks: &Arc<dyn EngineCallbacks>,
+     ) -> Option<usize> {
++        if self.stream_host_required() { return None; }
+         let http = self.http.as_ref()?;
+         if now.mono < http.next_open_at
+             || http.conns.len() >= HTTP_MAX_CONNECTIONS
+@@ -1977,6 +1978,7 @@ impl SessionRuntime {
+         choice: usize,
+         token: Token,
+     ) -> Result<Option<(HttpConn, Option<NamedAddress>)>, ()> {
++        if self.stream_host_required() { return Err(()); }
+         let candidates = self.http_candidates();
+         let Some(candidate) = candidates.get(choice).cloned() else {
+             return Err(());
+@@ -2084,7 +2086,7 @@ impl SessionRuntime {
+         resolver: &mut dyn Resolve,
+         rng: &mut OsRandom,
+     ) {
+-        if self.setup.transport != crate::types::TransportPreference::Auto
++        if self.stream_host_required() || self.setup.transport != crate::types::TransportPreference::Auto
+             || self.http.is_some()
+             || self.auto.on_websocket
+             || self.auto.round_open
+@@ -2185,7 +2187,7 @@ impl SessionRuntime {
+         resolver: &mut dyn Resolve,
+         rng: &mut OsRandom,
+     ) {
+-        if !self.auto.round_open || self.auto.https_tried {
++        if self.stream_host_required() || !self.auto.round_open || self.auto.https_tried {
+             return;
+         }
+         if self
+diff --git a/crates/mtproto-engine/src/session_runtime.rs b/crates/mtproto-engine/src/session_runtime.rs
+index 69a7dc6..35cb3d9 100644
+--- a/crates/mtproto-engine/src/session_runtime.rs
++++ b/crates/mtproto-engine/src/session_runtime.rs
+@@ -1269,6 +1269,10 @@ impl SessionRuntime {
+         }
+     }
+ 
++    fn stream_host_required(&self) -> bool {
++        self.host_streams.as_ref().is_some_and(|(streams, _)| streams.required())
++    }
++
+     fn start_connection(
+         &mut self,
+         registry: &Registry,
+@@ -1280,6 +1284,9 @@ impl SessionRuntime {
+         if !self.network_available {
+             self.unavailable_probe_at = now.mono + UNAVAILABLE_PROBE_INTERVAL;
+         }
++        if self.stream_host_required() {
++            return self.start_carrier_connection(registry, now, rng);
++        }
+         if self.setup.web_proxy() {
+             return self.start_carrier_connection(registry, now, rng);
+         }
+@@ -1368,6 +1375,7 @@ impl SessionRuntime {
+     }
+ 
+     fn start_racer(&mut self, registry: &Registry, now: Now, resolver: &mut dyn Resolve, rng: &mut OsRandom) {
++        if self.stream_host_required() { return; }
+         let Some(primary) = &self.connection else {
+             return;
+         };
+diff --git a/crates/mtproto-engine/tests/required_host.rs b/crates/mtproto-engine/tests/required_host.rs
+new file mode 100644
+index 0000000..94ee702
+--- /dev/null
++++ b/crates/mtproto-engine/tests/required_host.rs
+@@ -0,0 +1,84 @@
++use std::io::ErrorKind;
++use std::net::TcpListener;
++use std::sync::{Arc, mpsc};
++use std::time::{Duration, Instant};
++
++use mtproto_core::rpc::SessionRole;
++use mtproto_engine::{DcAddress, Engine, EngineCallbacks, EngineConfig, EngineEvent, SessionHandle,
++    SessionSetup, StreamHost, StreamId, StreamTarget, TransportPreference};
++
++struct Callbacks;
++impl EngineCallbacks for Callbacks {
++    fn on_event(&self, _: SessionHandle, _: EngineEvent) {}
++}
++
++struct Host(mpsc::Sender<(StreamId, StreamTarget)>);
++impl StreamHost for Host {
++    fn open(&self, id: StreamId, target: &StreamTarget) { let _ = self.0.send((id, target.clone())); }
++    fn write(&self, _: StreamId, _: &[u8]) {}
++    fn close(&self, _: StreamId) {}
++    fn resume(&self, _: StreamId) {}
++}
++
++fn engine() -> Engine {
++    Engine::new(EngineConfig { worker_threads: 1, connect_timeout: 0.3,
++        max_reconnect_delay: 0.2, ..EngineConfig::default() }, Arc::new(Callbacks)).unwrap()
++}
++
++fn session(port: u16) -> SessionSetup {
++    let mut setup = SessionSetup::new(2, SessionRole::Main, vec![
++        DcAddress { host: "127.0.0.1".into(), port, secret: None },
++        DcAddress { host: "127.0.0.2".into(), port, secret: None }]);
++    setup.online = true;
++    setup.paused = false;
++    setup.transport = TransportPreference::Auto;
++    setup.http_port = Some(port);
++    setup
++}
++
++fn assert_no_connections(listener: &TcpListener, duration: Duration) {
++    let until = Instant::now() + duration;
++    while Instant::now() < until {
++        match listener.accept() {
++            Err(error) if error.kind() == ErrorKind::WouldBlock => {},
++            _ => panic!("required host stream opened a direct TCP/HTTP connection"),
++        }
++        std::thread::sleep(Duration::from_millis(10));
++    }
++}
++
++#[test]
++fn required_tcp_uses_host_and_failure_cannot_race_or_probe_directly() {
++    let listener = TcpListener::bind("0.0.0.0:0").unwrap();
++    listener.set_nonblocking(true).unwrap();
++    let engine = engine();
++    engine.require_stream_host(true);
++    let (sender, receiver) = mpsc::channel();
++    engine.set_stream_host(Some(Arc::new(Host(sender))));
++    let handle = engine.create_session(session(listener.local_addr().unwrap().port()));
++    let (id, target) = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
++    assert!(!target.carrier);
++    assert!(target.tls_server_name.is_none());
++    assert!(target.host.starts_with("127.0.0."));
++    engine.stream_opened(id);
++    assert_no_connections(&listener, Duration::from_secs(2));
++    engine.stream_closed(id, Some("test transport failure".into()));
++    engine.set_stream_host(None);
++    assert_no_connections(&listener, Duration::from_secs(2));
++    engine.destroy_session(handle);
++}
++
++#[test]
++fn missing_required_host_and_explicit_http_fail_closed() {
++    let listener = TcpListener::bind("0.0.0.0:0").unwrap();
++    listener.set_nonblocking(true).unwrap();
++    let engine = engine();
++    engine.require_stream_host(true);
++    let mut setup = session(listener.local_addr().unwrap().port());
++    let tcp = engine.create_session(setup.clone());
++    setup.transport = TransportPreference::Http;
++    let http = engine.create_session(setup);
++    assert_no_connections(&listener, Duration::from_secs(2));
++    engine.destroy_session(tcp);
++    engine.destroy_session(http);
++}
+diff --git a/crates/mtproto-ffi/include/mtproto_engine.h b/crates/mtproto-ffi/include/mtproto_engine.h
+index 4f4afe5..e7ab01d 100644
+--- a/crates/mtproto-ffi/include/mtproto_engine.h
++++ b/crates/mtproto-ffi/include/mtproto_engine.h
+@@ -297,6 +297,7 @@ typedef struct {
+ } MTStreamHost;
+ 
+ /* NULL removes the host; routes that need one are then not tried. */
++void mt_engine_require_stream_host(MTEngine *engine, uint8_t required);
+ void mt_engine_set_stream_host(MTEngine *engine, const MTStreamHost *host);
+ /* The stream is open (TLS done): bytes may go both ways. */
+ void mt_stream_opened(MTEngine *engine, uint64_t stream);
+diff --git a/crates/mtproto-ffi/src/lib.rs b/crates/mtproto-ffi/src/lib.rs
+index 68468db..3773985 100644
+--- a/crates/mtproto-ffi/src/lib.rs
++++ b/crates/mtproto-ffi/src/lib.rs
+@@ -786,6 +786,13 @@ pub unsafe extern "C" fn mt_engine_set_stream_host(pointer: *mut MTEngine, host:
+     wrapper.engine.set_stream_host(host);
+ }
+ 
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn mt_engine_require_stream_host(pointer: *mut MTEngine, required: u8) {
++    if let Some(engine) = unsafe { engine(pointer) } {
++        engine.require_stream_host(required != 0);
++    }
++}
++
+ #[unsafe(no_mangle)]
+ pub unsafe extern "C" fn mt_stream_opened(pointer: *mut MTEngine, stream: u64) {
+     if let Some(engine) = unsafe { engine(pointer) } {

@@ -1,5 +1,6 @@
 import Cocoa
 import Foundation
+import MieruTransport
 import SwiftSignalKit
 import TelegramCore
 import InAppSettings
@@ -456,6 +457,11 @@ public final class OngoingCallContext {
         
         cleanupCallLogs(account: account)
         queue.sync {
+            guard !MieruRuntime.shared.enabled else {
+                MieruRuntime.shared.report(MieruError.unsupported.message)
+                self.contextState.set(.single(OngoingCallContextState(state: .failed, videoState: .notAvailable, remoteVideoState: .inactive, remoteAudioState: .active, remoteBatteryLevel: .normal, remoteAspectRatio: 0)))
+                return
+            }
             
             let version = version
             let allowP2P = allowP2P
