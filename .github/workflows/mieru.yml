@@ -90,6 +90,9 @@ jobs:
           chmod +x .mieru-work/cache-tools/gtar
           go build -o .mieru-work/cache-tools/mieru-sparse-tar scripts/mieru-sparse-tar.go
           echo "MIERU_CACHE_TOOL_PATH=$GITHUB_WORKSPACE/.mieru-work/cache-tools:$PATH" >> "$GITHUB_ENV"
+          mkdir -p .mieru-work/DerivedData/CompilationCache.noindex
+          hdiutil create -size 100g -type SPARSE -fs APFS -volname MieruCompilationCache .mieru-work/cas.sparseimage > .mieru-work/logs/sparse-volume.log
+          hdiutil attach -nobrowse -mountpoint "$GITHUB_WORKSPACE/.mieru-work/DerivedData/CompilationCache.noindex" .mieru-work/cas.sparseimage >> .mieru-work/logs/sparse-volume.log
           python3 scripts/verify-mieru-sparse-cache.py
       - uses: actions/cache/restore@v4
         id: swift-cache

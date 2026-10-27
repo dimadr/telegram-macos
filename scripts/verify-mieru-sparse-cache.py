@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 
 
-with tempfile.TemporaryDirectory(dir=".mieru-work") as temporary:
+with tempfile.TemporaryDirectory(dir=".mieru-work/DerivedData/CompilationCache.noindex") as temporary:
     root = Path(temporary).resolve()
     source = root / "input"
     source.write_bytes(bytes(16 * 1024 * 1024))
