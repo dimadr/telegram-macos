@@ -19,9 +19,10 @@ function walk(directory, group) {
             const stat = fs.statSync(file);
             const suffix = suffixes.find(value => file.endsWith(value)) || 'other';
             const key = group + ':' + suffix;
-            const value = groups[key] ||= { files: 0, bytes: 0 };
+            const value = groups[key] ||= { files: 0, bytes: 0, allocatedBytes: 0 };
             value.files++;
             value.bytes += stat.size;
+            value.allocatedBytes += Number.isFinite(stat.blocks) ? stat.blocks * 512 : stat.size;
             if (entry.name.startsWith('build.db') || entry.name.endsWith('.swiftdeps') && records.length < 12) {
                 records.push({ path: path.relative(root, file), bytes: stat.size, modified: stat.mtime.toISOString() });
             }

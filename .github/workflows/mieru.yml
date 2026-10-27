@@ -17,9 +17,9 @@ jobs:
   app:
     if: github.head_ref == 'codex/mieru-client-api' || github.ref == 'refs/heads/codex/mieru-client-api'
     runs-on: macos-15
-    timeout-minutes: 39
+    timeout-minutes: 33
     env:
-      MIERU_CI_BUILD_MINUTES: "34"
+      MIERU_CI_BUILD_MINUTES: "28"
       GOCACHE: ${{ github.workspace }}/.mieru-work/go-cache
       GOMODCACHE: ${{ github.workspace }}/.mieru-work/go-modules
       GOTMPDIR: ${{ github.workspace }}/.mieru-work/go-tmp
@@ -83,8 +83,16 @@ jobs:
             ~/.rustup/toolchains
           key: mieru-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.gitmodules', 'core-xprojects/**', 'patches/mieru/**', 'scripts/framework-inputs.sh', 'scripts/prepare-mieru-ci.sh') }}
           restore-keys: mieru-native-${{ runner.os }}-${{ runner.arch }}-
+      - name: Prepare sparse Swift cache extraction
+        run: |
+          mkdir -p .mieru-work/cache-tools
+          cp scripts/mieru-cache-tar.sh .mieru-work/cache-tools/gtar
+          chmod +x .mieru-work/cache-tools/gtar
+          echo "MIERU_CACHE_TOOL_PATH=$GITHUB_WORKSPACE/.mieru-work/cache-tools:$PATH" >> "$GITHUB_ENV"
       - uses: actions/cache/restore@v4
         id: swift-cache
+        env:
+          PATH: ${{ env.MIERU_CACHE_TOOL_PATH }}
         with:
           path: |
             .mieru-work/DerivedData/Build/Intermediates.noindex
@@ -105,6 +113,8 @@ jobs:
       - name: Recover CI 5 Swift cache when expanded cache is absent
         if: steps.swift-cache.outputs.cache-matched-key == ''
         uses: actions/cache/restore@v4
+        env:
+          PATH: ${{ env.MIERU_CACHE_TOOL_PATH }}
         with:
           path: |
             .mieru-work/DerivedData/Build/Intermediates.noindex
@@ -169,6 +179,8 @@ jobs:
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
       - uses: actions/cache/save@v4
         if: always() && steps.swift-cache.outcome == 'success' && steps.swift-cache.outputs.cache-hit != 'true'
+        env:
+          PATH: ${{ env.MIERU_CACHE_TOOL_PATH }}
         with:
           path: |
             .mieru-work/DerivedData/Build/Intermediates.noindex
