@@ -7,10 +7,21 @@ test -d "$APP"
 test -x "$EXECUTABLE"
 test "$(lipo -archs "$EXECUTABLE")" == arm64
 file "$EXECUTABLE"
-otool -L "$EXECUTABLE"
-nm -g "$EXECUTABLE" > .mieru-work/logs/app-symbols.log
+otool -L "$EXECUTABLE" > .mieru-work/logs/app-loads.log
+cat .mieru-work/logs/app-loads.log
+CODE_IMAGE="$EXECUTABLE"
+if grep -F '@rpath/Telegram.debug.dylib' .mieru-work/logs/app-loads.log; then
+    CODE_IMAGE="$EXECUTABLE.debug.dylib"
+    test -f "$CODE_IMAGE"
+    test "$(lipo -archs "$CODE_IMAGE")" == arm64
+    otool -L "$CODE_IMAGE"
+fi
+nm -g "$CODE_IMAGE" > .mieru-work/logs/app-symbols.log
 for symbol in MieruClientNew MieruConnectionDial MieruConnectionRead MieruConnectionWrite mt_engine_require_stream_host; do
-    grep -E " _${symbol}$" .mieru-work/logs/app-symbols.log
+    grep -E " [TDS] _${symbol}$" .mieru-work/logs/app-symbols.log || {
+        echo "Missing defined in-app transport symbol: $symbol" >&2
+        exit 1
+    }
 done
 codesign -dv --verbose=2 "$APP" > .mieru-work/logs/codesign.log 2>&1 || true
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist"
