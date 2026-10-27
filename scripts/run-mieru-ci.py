@@ -32,7 +32,9 @@ with log.open("wb") as output:
         except subprocess.TimeoutExpired:
             if name == "package-graph":
                 try:
-                    subprocess.run(["sample", str(process.pid), "5", "-file", str(logs / "package-graph-sample.txt")], stdout=output, stderr=subprocess.STDOUT, timeout=15, check=False)
+                    with (logs / "package-graph-processes.txt").open("wb") as processes:
+                        subprocess.run(["ps", "-axo", "pid,ppid,state,pcpu,etime,comm"], stdout=processes, stderr=subprocess.STDOUT, timeout=10, check=False)
+                    subprocess.run(["sample", str(process.pid), "1", "-file", str(logs / "package-graph-sample.txt")], stdout=output, stderr=subprocess.STDOUT, timeout=60, check=False)
                 except (OSError, subprocess.TimeoutExpired) as error:
                     output.write(("Stack sampling failed: " + str(error) + "\n").encode())
             os.killpg(process.pid, signal.SIGTERM)
