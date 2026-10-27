@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 120
     env:
       MIERU_CI_BUILD_MINUTES: "115"
+      MIERU_CI_LEGACY_APP_ICON: "1"
       GOCACHE: ${{ github.workspace }}/.mieru-work/go-cache
       GOMODCACHE: ${{ github.workspace }}/.mieru-work/go-modules
       GOTMPDIR: ${{ github.workspace }}/.mieru-work/go-tmp

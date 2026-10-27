@@ -163,6 +163,12 @@ func extract() error {
 			if target, err = contained(root, target); err != nil {
 				return err
 			}
+			if header.Typeflag == tar.TypeLink && target == name {
+				if _, err = os.Lstat(name); err != nil {
+					return err
+				}
+				continue
+			}
 			if err = os.Remove(name); err != nil && !os.IsNotExist(err) {
 				return err
 			}
