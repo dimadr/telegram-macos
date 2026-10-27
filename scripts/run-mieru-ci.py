@@ -11,7 +11,10 @@ name, *command = sys.argv[1:]
 logs = Path(".mieru-work/logs")
 logs.mkdir(parents=True, exist_ok=True)
 started = time.time()
-deadline = int(os.environ["MIERU_CI_STARTED_AT"]) + 40 * 60
+build_minutes = int(os.environ.get("MIERU_CI_BUILD_MINUTES", "40"))
+if not 1 <= build_minutes <= 40:
+    raise ValueError("MIERU_CI_BUILD_MINUTES must be between 1 and 40")
+deadline = int(os.environ["MIERU_CI_STARTED_AT"]) + build_minutes * 60
 remaining = deadline - started
 status = 124
 log = logs / (name + ".log")

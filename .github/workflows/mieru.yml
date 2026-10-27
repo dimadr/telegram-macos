@@ -17,8 +17,9 @@ jobs:
   app:
     if: github.head_ref == 'codex/mieru-client-api' || github.ref == 'refs/heads/codex/mieru-client-api'
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 39
     env:
+      MIERU_CI_BUILD_MINUTES: "34"
       GOCACHE: ${{ github.workspace }}/.mieru-work/go-cache
       GOMODCACHE: ${{ github.workspace }}/.mieru-work/go-modules
       GOTMPDIR: ${{ github.workspace }}/.mieru-work/go-tmp
