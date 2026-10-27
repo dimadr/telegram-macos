@@ -2,6 +2,9 @@
 
 ## State
 
+- FREEZE / CONTEXT CHECKPOINT 2026-10-27: user reported only 5% remaining context. Stop work now; no new CI, research or audit. Leave already running CI #13 alone: https://github.com/dimadr/telegram-macos/actions/runs/40493240015 . Tested source HEAD: `67d36d7dcb7a45d2e1b8aa7e22b87949e7b7ac41`. Last observed status was `in_progress` at 11:03:32 UTC (14:03:32 Moscow); its result has NOT been checked at this checkpoint. Do not infer PASS.
+- CI #13 tests the minimal PIF/workspace-state reset described below. First continuation action, only if user unfreezes project: inspect this existing run and its diagnostics. Do not launch a fresh run or repeat architecture/dependency investigation. If graph phase times out, read `package-graph-processes.txt` and `package-graph-sample.txt` if present. Preserve the working object/module/native/CAS caches. Main .app, final linkage/startup, icon workaround, functional Mieru tests and final code audit remain unverified.
+
 - CI #12 https://github.com/dimadr/telegram-macos/actions/runs/40488009329 on `9b5505b0721f64637c6e0bd08610ff1fa287c99e` reproduced a package-graph hang, exit 124 after the isolated 30-minute graph phase. No compilation occurred. `sample` exceeded its 15-second diagnostic timeout, leaving no sample file. Diagnostics: https://github.com/dimadr/telegram-macos/actions/runs/40488009329/artifacts/12728669542 ; local `.mieru-work/run12-logs`.
 - Next minimal fix resets only restored `XCBuildData/PIFCache` and `SourcePackages/workspace-state.json` so Xcode reconstructs graph metadata. Objects, modules, build.db and compilation CAS are retained; no timestamps are fabricated. This tests the stale-graph-cache hypothesis, not a proven root cause. A further graph timeout records process names/states and allows up to 60 seconds for a one-second stack sample. Do not claim resolution until this is tested.
 
