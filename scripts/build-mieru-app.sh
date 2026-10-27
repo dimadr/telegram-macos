@@ -19,7 +19,11 @@ APP_BUILD_SETTINGS=()
 if [[ "${MIERU_CI_LEGACY_APP_ICON:-0}" == 1 ]]; then
     APP_BUILD_SETTINGS+=("EXCLUDED_SOURCE_FILE_NAMES=AppIcon.icon")
 fi
-DEVELOPER_DIR="$APP_TOOLCHAIN" xcodebuild -showBuildTimingSummary -workspace Telegram-Mac.xcworkspace -scheme Telegram -configuration Debug \
+DEVELOPER_DIR="$APP_TOOLCHAIN" MIERU_CI_PHASE_MINUTES=30 python3 scripts/run-mieru-ci.py package-graph \
+    xcodebuild -resolvePackageDependencies -skipPackageUpdates -workspace Telegram-Mac.xcworkspace -scheme Telegram -configuration Debug \
+    -destination 'generic/platform=macOS' -arch arm64 -derivedDataPath .mieru-work/DerivedData MACOSX_DEPLOYMENT_TARGET=12.0 CODE_SIGNING_ALLOWED=NO
+DEVELOPER_DIR="$APP_TOOLCHAIN" xcodebuild -showBuildTimingSummary -skipPackageUpdates -disableAutomaticPackageResolution \
+    -workspace Telegram-Mac.xcworkspace -scheme Telegram -configuration Debug -destination 'generic/platform=macOS' \
     -arch arm64 -derivedDataPath .mieru-work/DerivedData \
     MACOSX_DEPLOYMENT_TARGET=12.0 CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
     COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES \

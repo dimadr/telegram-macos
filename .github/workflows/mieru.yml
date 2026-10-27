@@ -132,6 +132,14 @@ jobs:
         run: DEVELOPER_DIR="$MIERU_APP_DEVELOPER_DIR" python3 scripts/run-mieru-ci.py swift-transport swift build --package-path packages/MieruTransport
       - name: Inspect restored Swift cache
         run: node scripts/inspect-mieru-cache.cjs restored
+      - uses: actions/cache/restore@v4
+        id: package-cache
+        with:
+          path: |
+            .mieru-work/DerivedData/SourcePackages
+            ~/Library/Caches/org.swift.swiftpm/manifests
+          key: mieru-packages-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: mieru-packages-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-
       - name: Build the complete arm64 app
         run: python3 scripts/run-mieru-ci.py app bash scripts/build-mieru-app.sh
       - name: Inspect final Swift cache
@@ -203,3 +211,10 @@ jobs:
             .mieru-work/DerivedData/Build/Products/**/*.abi.json
             packages/MieruTransport/.build
           key: ${{ steps.swift-cache.outputs.cache-primary-key }}
+      - uses: actions/cache/save@v4
+        if: always() && steps.package-cache.outcome == 'success' && steps.package-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            .mieru-work/DerivedData/SourcePackages
+            ~/Library/Caches/org.swift.swiftpm/manifests
+          key: ${{ steps.package-cache.outputs.cache-primary-key }}
