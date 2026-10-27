@@ -11,6 +11,6 @@ for argument in "$@"; do
     arguments+=("$argument")
 done
 if [[ "$extract" == yes ]]; then
-    arguments=(-S "${arguments[@]}")
+    exec "${MIERU_SPARSE_TAR:-$PWD/.mieru-work/cache-tools/mieru-sparse-tar}" "${arguments[@]}"
 fi
 exec "${MIERU_CACHE_BSDTAR:-/usr/bin/tar}" "${arguments[@]}"
