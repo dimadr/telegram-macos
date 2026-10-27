@@ -11,9 +11,9 @@ name, *command = sys.argv[1:]
 logs = Path(".mieru-work/logs")
 logs.mkdir(parents=True, exist_ok=True)
 started = time.time()
-build_minutes = int(os.environ.get("MIERU_CI_BUILD_MINUTES", "40"))
-if not 1 <= build_minutes <= 40:
-    raise ValueError("MIERU_CI_BUILD_MINUTES must be between 1 and 40")
+build_minutes = int(os.environ.get("MIERU_CI_BUILD_MINUTES", "115"))
+if not 1 <= build_minutes <= 115:
+    raise ValueError("MIERU_CI_BUILD_MINUTES must be between 1 and 115")
 deadline = int(os.environ["MIERU_CI_STARTED_AT"]) + build_minutes * 60
 remaining = deadline - started
 status = 124

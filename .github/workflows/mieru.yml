@@ -17,9 +17,9 @@ jobs:
   app:
     if: github.head_ref == 'codex/mieru-client-api' || github.ref == 'refs/heads/codex/mieru-client-api'
     runs-on: macos-15
-    timeout-minutes: 33
+    timeout-minutes: 120
     env:
-      MIERU_CI_BUILD_MINUTES: "28"
+      MIERU_CI_BUILD_MINUTES: "115"
       GOCACHE: ${{ github.workspace }}/.mieru-work/go-cache
       GOMODCACHE: ${{ github.workspace }}/.mieru-work/go-modules
       GOTMPDIR: ${{ github.workspace }}/.mieru-work/go-tmp
@@ -89,6 +89,7 @@ jobs:
           cp scripts/mieru-cache-tar.sh .mieru-work/cache-tools/gtar
           chmod +x .mieru-work/cache-tools/gtar
           echo "MIERU_CACHE_TOOL_PATH=$GITHUB_WORKSPACE/.mieru-work/cache-tools:$PATH" >> "$GITHUB_ENV"
+          python3 scripts/verify-mieru-sparse-cache.py
       - uses: actions/cache/restore@v4
         id: swift-cache
         env:
