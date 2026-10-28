@@ -3,6 +3,9 @@ set -euo pipefail
 
 APP=".mieru-work/DerivedData/Build/Products/Debug/Telegram.app"
 EXECUTABLE="$APP/Contents/MacOS/Telegram"
+codesign --verify --deep --strict "$APP"
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" == org.dimadr.Telegramita
+test -f "$APP/Contents/_CodeSignature/CodeResources"
 test -d "$APP"
 test -x "$EXECUTABLE"
 test "$(lipo -archs "$EXECUTABLE")" == arm64
@@ -33,6 +36,7 @@ if find "$APP/Contents" -type f \( -name mieru -o -name mieru.exe -o -name libmi
 fi
 mkdir -p .mieru-work/delivery
 mv "$APP" .mieru-work/delivery/Telegramita.app
+codesign --verify --deep --strict .mieru-work/delivery/Telegramita.app
 ditto -c -k --sequesterRsrc --keepParent .mieru-work/delivery/Telegramita.app .mieru-work/Telegramita-macOS-arm64-unsigned.zip
 shasum -a 256 .mieru-work/Telegramita-macOS-arm64-unsigned.zip > .mieru-work/Telegramita-macOS-arm64-unsigned.sha256
 node scripts/mieru-artifact.cjs seal .github/mieru-artifact-public.pem .mieru-work/Telegramita-macOS-arm64-unsigned.zip .mieru-work/Telegramita-macOS-arm64-unsigned.zip.enc

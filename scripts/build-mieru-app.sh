@@ -11,6 +11,7 @@ mkdir -p .mieru-work/logs
 APP_TOOLCHAIN="${MIERU_APP_DEVELOPER_DIR:-${DEVELOPER_DIR:-$(xcode-select -p)}}"
 NATIVE_TOOLCHAIN="${MIERU_NATIVE_DEVELOPER_DIR:-$APP_TOOLCHAIN}"
 bash scripts/apply-mieru-patches.sh
+node scripts/prepare-telegramita-local.cjs
 if [[ "$(DEVELOPER_DIR="$APP_TOOLCHAIN" xcodebuild -version | head -1 | awk '{print $2}' | cut -d. -f1)" -ge 27 ]]; then
     DEVELOPER_DIR="$APP_TOOLCHAIN" bash scripts/xcode27.sh apply
 fi

@@ -11,16 +11,22 @@ async function main() {
         return;
     }
     const executable = '.mieru-work/DerivedData/Build/Products/Debug/Telegram.app/Contents/MacOS/Telegram';
+    const root = require('node:path').join(require('node:os').homedir(), 'Library/Application Support/org.dimadr.Telegramita/v1');
+    if (fs.existsSync(root)) throw new Error('First-launch test requires an absent Telegramita data root; existing data will not be removed');
+    report.clean_storage_before_launch = true;
     const output = fs.openSync('.mieru-work/logs/app-startup.log', 'w');
     let child;
     try {
         child = spawn(executable, [], { stdio: ['ignore', output, output] });
         await new Promise((resolve, reject) => {
-            const timer = setTimeout(resolve, 12000);
+            const timer = setTimeout(resolve, 30000);
             child.once('error', error => { clearTimeout(timer); reject(error); });
             child.once('exit', () => { clearTimeout(timer); resolve(); });
         });
         report.status = child.exitCode === null && child.signalCode === null ? 'PASS' : 'FAIL';
+        report.isolated_database = fs.existsSync(root + '/accounts-metadata/db_sqlite');
+        report.account_manager_ready = fs.readFileSync('.mieru-work/logs/app-startup.log', 'utf8').includes('Telegramita account manager ready');
+        if (!report.isolated_database || !report.account_manager_ready) report.status = 'FAIL';
         report.exit_code = child.exitCode;
         report.signal = child.signalCode;
     } catch (error) {

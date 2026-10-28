@@ -17,9 +17,9 @@ jobs:
   app:
     if: github.head_ref == 'codex/mieru-client-api' || github.ref == 'refs/heads/codex/mieru-client-api'
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 120
     env:
-      MIERU_SQLITE_DIAGNOSTICS_ONLY: "1"
+      MIERU_SQLITE_DIAGNOSTICS_ONLY: "0"
       MIERU_CI_BUILD_MINUTES: "115"
       MIERU_CI_LEGACY_APP_ICON: "1"
       GOCACHE: ${{ github.workspace }}/.mieru-work/go-cache
@@ -151,6 +151,8 @@ jobs:
       - name: Inspect final Swift cache
         if: always()
         run: node scripts/inspect-mieru-cache.cjs final
+      - name: Seal local ad-hoc app bundle
+        run: bash scripts/sign-telegramita-local.sh > .mieru-work/logs/local-signing.log 2>&1
       - name: Smoke-test app startup
         if: env.MIERU_SQLITE_DIAGNOSTICS_ONLY != '1'
         id: startup-smoke
