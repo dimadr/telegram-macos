@@ -64,7 +64,8 @@ edit('Telegram-Mac/app/AppDelegate.swift', text => {
 
 ` + marker);
 });
-edit('packages/MieruTransport/Sources/MieruTransport/MieruRuntime.swift', text => once(text, 'UserDefaults(suiteName: "6N38VWS5BX.ru.keepcoder.Telegram")!', 'UserDefaults(suiteName: "org.dimadr.Telegramita.mieru")!'));
+const mieruRuntime = fs.readFileSync('packages/MieruTransport/Sources/MieruTransport/MieruRuntime.swift', 'utf8');
+if (!mieruRuntime.includes('UserDefaults(suiteName: "org.dimadr.Telegramita.mieru")!') || mieruRuntime.includes('6N38VWS5BX.ru.keepcoder.Telegram')) throw new Error('Mieru settings must use the isolated Telegramita defaults');
 edit('submodules/telegram-ios/submodules/PasscodeCore/Sources/PasscodeKeychainScope.swift', text => {
     const marker = '        return Self.migrateLegacyItems(passcodeService: passcodeService, walletServicePrefixes: walletServicePrefixes, environment: environment, keychain: Self.system)';
     return once(text, marker, '        if environment.keychainScope == "telegramita-v1" { return .nothingToMigrate }\n' + marker);

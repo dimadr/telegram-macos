@@ -14,26 +14,6 @@ import AlertsUI
 import ProxyUtils
 import MieruTransport
 
-private func showMieruError(_ error: Error) {
-    let alert = NSAlert()
-    alert.messageText = (error as? MieruError ?? .invalidConfiguration).message
-    alert.runModal()
-}
-
-private func importMieruProfile() {
-    let panel = NSOpenPanel()
-    panel.allowedFileTypes = ["json"]
-    panel.allowsMultipleSelection = false
-    panel.begin { result in
-        guard result == .OK, let url = panel.url else { return }
-        do {
-            let values = try url.resourceValues(forKeys: [.fileSizeKey])
-            guard let size = values.fileSize, size > 0, size <= 1024 * 1024 else { throw MieruError.invalidConfiguration }
-            try MieruRuntime.shared.importProfile(Data(contentsOf: url))
-        } catch { showMieruError(error) }
-    }
-}
-
 private let _p_id_enable: InputDataIdentifier = InputDataIdentifier("_p_id_enable")
 private let _p_id_add: InputDataIdentifier = InputDataIdentifier("_p_id_add")
 private let _id_calls: InputDataIdentifier = InputDataIdentifier("_id_calls")
@@ -95,14 +75,7 @@ private func proxyListSettingsEntries(_ state: ProxyListState, status: Connectio
     sectionId += 1
 
     entries.append(.custom(sectionId: sectionId, index: index, value: .string(nil), identifier: InputDataIdentifier("mieru_enable"), equatable: InputDataEquatable(state.mieru), comparable: nil, item: { size, stableId in
-        GeneralInteractedRowItem(size, stableId: stableId, name: "Mieru", type: .switchable(state.mieru.enabled), viewType: .firstItem, action: {
-            do { try MieruRuntime.shared.setEnabled(!state.mieru.enabled) }
-            catch { showMieruError(error) }
-        })
-    }))
-    index += 1
-    entries.append(.custom(sectionId: sectionId, index: index, value: .string(nil), identifier: InputDataIdentifier("mieru_import"), equatable: nil, comparable: nil, item: { size, stableId in
-        GeneralInteractedRowItem(size, stableId: stableId, name: "Import Mieru JSON…", nameStyle: blueActionButton, type: .none, viewType: .lastItem, action: importMieruProfile)
+        GeneralInteractedRowItem(size, stableId: stableId, name: "Mieru", type: .next, viewType: .singleItem, action: arguments.openMieru)
     }))
     index += 1
     entries.append(.desc(sectionId: sectionId, index: index, text: .plain(state.mieru.status + "\nChanges apply after restart. While active, Mieru overrides proxy selection; calls, HTTP/WebSocket and sharing are disabled."), data: InputDataGeneralTextData(viewType: .textBottomItem)))
@@ -212,13 +185,15 @@ private final class ProxyListArguments {
     let disconnect:()->Void
     let reconnectLatest:()->Void
     let enableForCalls:(Bool)->Void
-    init(edit:@escaping(ProxyServerSettings?)->Void, delete: @escaping(ProxyServerSettings)->Void, connect: @escaping(ProxyServerSettings)->Void, disconnect: @escaping()->Void, reconnectLatest:@escaping()->Void, enableForCalls:@escaping(Bool)->Void) {
+    let openMieru: () -> Void
+    init(edit:@escaping(ProxyServerSettings?)->Void, delete: @escaping(ProxyServerSettings)->Void, connect: @escaping(ProxyServerSettings)->Void, disconnect: @escaping()->Void, reconnectLatest:@escaping()->Void, enableForCalls:@escaping(Bool)->Void, openMieru: @escaping () -> Void) {
         self.edit = edit
         self.delete = delete
         self.connect = connect
         self.disconnect = disconnect
         self.reconnectLatest = reconnectLatest
         self.enableForCalls = enableForCalls
+        self.openMieru = openMieru
     }
 }
 
@@ -286,6 +261,8 @@ public func proxyListController(accountManager: AccountManager<TelegramAccountMa
         }).start())
     }, enableForCalls: { enable in
         updateDisposable.set(updateProxySettingsInteractively(accountManager: accountManager, {$0.withUpdatedUseForCalls(enable)}).start())
+    }, openMieru: {
+        pushController(mieruSettingsController(pushController: pushController))
     })
     
     let controller = InputDataController(dataSignal: combineLatest(queue: prepareQueue, statePromise.get(), network.connectionStatus, statuses.statuses(), appearanceSignal) |> map {proxyListSettingsEntries($0.0, status: $0.1, statuses: $0.2, arguments: arguments, showUseCalls: showUseCalls)} |> map { InputDataSignalValue(entries: $0) }, title: strings().proxySettingsTitle, validateData: {
@@ -297,8 +274,6 @@ public func proxyListController(accountManager: AccountManager<TelegramAccountMa
         
         
         return .fail(.none)
-    }, afterDisappear: {
-        actionsDisposable.dispose()
     }, removeAfterDisappear: false, hasDone: false, identifier: "proxy", afterTransaction: { controller in
         controller.rightBarView.isHidden = stateValue.with { $0.settings.servers.isEmpty }
     })

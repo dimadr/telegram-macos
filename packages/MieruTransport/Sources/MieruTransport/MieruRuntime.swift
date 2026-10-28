@@ -3,7 +3,7 @@ import Security
 import MieruABI
 import Darwin
 
-public enum MieruError: Int, Error {
+public enum MieruError: Int, Error, CaseIterable {
     case invalidConfiguration = -1
     case closed = -2
     case timeout = -3
@@ -44,11 +44,14 @@ public final class MieruRuntime {
     private var status: String
     private var profileChanged = false
     private var startupError: MieruError?
+    private var transportDiagnostic: MieruDiagnostic?
     private var extensionObserver: NSObjectProtocol?
     private let service = "Telegramita.Mieru.profile.v1"
+    private let repository = MieruProfileRepository()
+    private let profileLock = NSRecursiveLock()
 
     private init() {
-        let defaults = UserDefaults(suiteName: "6N38VWS5BX.ru.keepcoder.Telegram")!
+        let defaults = UserDefaults(suiteName: "org.dimadr.Telegramita.mieru")!
         let isExtension = Bundle.main.bundlePath.hasSuffix(".appex")
         let enabled = defaults.bool(forKey: isExtension ? "Telegramita.Mieru.active" : "Telegramita.Mieru.enabled")
         self.defaults = defaults
@@ -85,24 +88,27 @@ public final class MieruRuntime {
                 MieruClientStore(handle, bytes.baseAddress?.assumingMemoryBound(to: CChar.self), Int64(bytes.count))
             }
             guard stored == 0 else {
+                let diagnostic = self.clientDiagnostic(handle)
                 MieruClientFree(handle)
-                throw MieruError.from(Int64(stored))
+                throw diagnostic ?? MieruDiagnostic(stage: "configuration", code: "rejected", message: MieruError.from(Int64(stored)).message)
             }
             let started = MieruClientStart(handle)
             guard started == 0 else {
+                let diagnostic = self.clientDiagnostic(handle)
                 MieruClientFree(handle)
-                throw MieruError.from(Int64(started))
+                throw diagnostic ?? MieruDiagnostic(stage: "client_start", code: "start_failed", message: MieruError.from(Int64(started)).message)
             }
             self.lock.lock()
             self.client = handle
             self.lock.unlock()
             self.report("Mieru started; waiting for network traffic")
         } catch {
-            let error = error as? MieruError ?? .invalidConfiguration
+            let routingError = error as? MieruError ?? .network
             self.lock.lock()
-            self.startupError = error
+            self.startupError = routingError
+            self.transportDiagnostic = error as? MieruDiagnostic
             self.lock.unlock()
-            self.report(error.message)
+            self.report((error as? MieruDiagnostic)?.localizedDescription ?? routingError.message)
         }
     }
 
@@ -117,34 +123,82 @@ public final class MieruRuntime {
     public func setEnabled(_ value: Bool) throws {
         if value { _ = try self.loadProfile() }
         self.defaults.set(value, forKey: "Telegramita.Mieru.enabled")
-        guard self.defaults.synchronize() else { throw MieruError.keychain }
+        guard self.defaults.synchronize() else {
+            throw MieruDiagnostic(stage: "preferences", code: "save", message: "Cannot save the Mieru enable setting")
+        }
         self.notify()
     }
 
     public func importProfile(_ data: Data) throws {
-        guard !data.isEmpty, data.count <= 1024 * 1024 else { throw MieruError.invalidConfiguration }
-        let validator = MieruClientNew()
-        guard validator != 0 else { throw MieruError.invalidConfiguration }
-        defer { MieruClientFree(validator) }
-        let result = data.withUnsafeBytes { bytes in
-            MieruClientStore(validator, bytes.baseAddress?.assumingMemoryBound(to: CChar.self), Int64(bytes.count))
+        let imported = try MieruConfiguration.normalize(data)
+        self.profileLock.lock()
+        defer { self.profileLock.unlock() }
+        var collection = try self.profiles()
+        var selected: UUID?
+        for profile in imported.profiles {
+            var entry = profile
+            var suffix = 2
+            while collection.profiles.contains(where: { $0.name == entry.name }) {
+                var object = try profile.object()
+                object["profileName"] = "\(profile.name) (\(suffix))"
+                entry = MieruProfile(id: profile.id, configuration: try JSONSerialization.data(withJSONObject: object))
+                suffix += 1
+            }
+            collection.profiles.append(entry)
+            if imported.activeID == profile.id { selected = entry.id }
         }
-        guard result == 0 else { throw MieruError.from(Int64(result)) }
-        let query = self.keychainQuery()
-        let attributes: [String: Any] = [kSecValueData as String: data]
-        let update = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if update == errSecItemNotFound {
-            var item = query
-            item[kSecValueData as String] = data
-            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw MieruError.keychain }
-        } else if update != errSecSuccess {
-            throw MieruError.keychain
+        collection.activeID = selected ?? collection.activeID
+        try self.repository.write(collection)
+        self.configurationSaved()
+    }
+
+    public func profiles() throws -> MieruProfileCollection {
+        self.profileLock.lock()
+        defer { self.profileLock.unlock() }
+        let saved = try self.repository.read()
+        if !saved.profiles.isEmpty { return saved }
+        if let legacy = try self.loadLegacyProfile() {
+            let imported = try MieruConfiguration.normalize(legacy)
+            try self.repository.write(imported)
+            return imported
         }
+        return saved
+    }
+
+    public func saveProfile(_ profile: MieruProfile) throws {
+        self.profileLock.lock()
+        defer { self.profileLock.unlock() }
+        var collection = try self.profiles()
+        if let index = collection.profiles.firstIndex(where: { $0.id == profile.id }) { collection.profiles[index] = profile }
+        else { collection.profiles.append(profile) }
+        collection.activeID = profile.id
+        try self.repository.write(collection)
+        self.configurationSaved()
+    }
+
+    public func selectProfile(_ id: UUID) throws {
+        self.profileLock.lock()
+        defer { self.profileLock.unlock() }
+        var collection = try self.profiles()
+        guard collection.profiles.contains(where: { $0.id == id }) else { throw MieruError.invalidConfiguration }
+        collection.activeID = id
+        try self.repository.write(collection)
+        self.configurationSaved()
+    }
+
+    private func configurationSaved() {
         self.lock.lock()
         self.profileChanged = true
         self.lock.unlock()
-        self.report("Configuration saved")
+        self.report("Profile saved in Keychain; restart Telegramita to apply")
+    }
+
+    private func clientDiagnostic(_ handle: UInt64) -> MieruDiagnostic? {
+        var output = Data(count: 4096)
+        let count = output.withUnsafeMutableBytes { MieruClientDiagnostic(handle, $0.baseAddress, Int64($0.count)) }
+        guard count > 0, count <= Int64(output.count) else { return nil }
+        output.count = Int(count)
+        return try? JSONDecoder().decode(MieruDiagnostic.self, from: output)
     }
 
     public func makeSocket(queue: DispatchQueue) throws -> MieruSocket {
@@ -160,10 +214,26 @@ public final class MieruRuntime {
 
     public func report(_ status: String) {
         self.lock.lock()
-        let changed = self.status != status
-        self.status = status
+        let isGenericError = MieruError.allCases.contains(where: { $0.message == status })
+        let resolved = isGenericError ? self.transportDiagnostic?.localizedDescription ?? status : status
+        if !isGenericError && status != self.transportDiagnostic?.localizedDescription { self.transportDiagnostic = nil }
+        let changed = self.status != resolved
+        self.status = resolved
         self.lock.unlock()
         if changed { self.notify() }
+    }
+
+    func reportConnectionFailure(_ handle: UInt64) {
+        var output = Data(count: 4096)
+        let count = output.withUnsafeMutableBytes { MieruConnectionDiagnostic(handle, $0.baseAddress, Int64($0.count)) }
+        guard count > 0, count <= Int64(output.count) else { return }
+        output.count = Int(count)
+        guard let diagnostic = try? JSONDecoder().decode(MieruDiagnostic.self, from: output), !diagnostic.code.isEmpty else { return }
+        self.lock.lock()
+        self.transportDiagnostic = diagnostic
+        self.status = diagnostic.localizedDescription
+        self.lock.unlock()
+        self.notify()
     }
 
     private func notify() {
@@ -176,12 +246,21 @@ public final class MieruRuntime {
     }
 
     private func loadProfile() throws -> Data {
+        guard let profile = try self.profiles().active else {
+            throw MieruDiagnostic(stage: "configuration", code: "missing_profile", message: "Add and save a Mieru profile first")
+        }
+        return profile.configuration
+    }
+
+    private func loadLegacyProfile() throws -> Data? {
         var query = self.keychainQuery()
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else {
-            throw MieruError.keychain
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw MieruDiagnostic(stage: "keychain", code: "osstatus_\(status)", message: "Cannot read the previous Telegramita profile from Keychain (OSStatus \(status)).")
         }
         return data
     }

@@ -17,6 +17,7 @@ public final class MieruSocket {
     public func connect(host: String, port: UInt16, timeout: TimeInterval, completion: @escaping (Result<Void, MieruError>) -> Void) {
         self.reads.async {
             let result = host.withCString { MieruConnectionDial(self.handle, $0, port, Self.milliseconds(timeout < 0 ? 86400 : timeout)) }
+            if result < 0 { MieruRuntime.shared.reportConnectionFailure(self.handle) }
             self.deliver(result < 0 ? .failure(.from(Int64(result))) : .success(()), completion)
         }
     }

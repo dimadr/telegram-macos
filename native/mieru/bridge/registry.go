@@ -2,7 +2,6 @@ package bridge
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -15,7 +14,6 @@ import (
 	"github.com/enfein/mieru/v3/apis/client"
 	"github.com/enfein/mieru/v3/pkg/appctl/appctlpb"
 	"github.com/enfein/mieru/v3/pkg/stderror"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
@@ -33,6 +31,7 @@ type Registry struct {
 	clients     map[uint64]*clientState
 	connections map[uint64]*connectionState
 	newClient   func() client.Client
+	probes      map[uint64]*probeState
 }
 
 type clientState struct {
@@ -43,6 +42,7 @@ type clientState struct {
 	started     bool
 	stopped     bool
 	connections map[uint64]*connectionState
+	diagnostic  Diagnostic
 }
 
 type connectionState struct {
@@ -57,6 +57,7 @@ type connectionState struct {
 	closed       bool
 	pendingRead  error
 	pendingWrite error
+	diagnostic   Diagnostic
 }
 
 type destination struct {
@@ -72,7 +73,7 @@ func NewRegistry() *Registry {
 }
 
 func newRegistry(factory func() client.Client) *Registry {
-	return &Registry{clients: make(map[uint64]*clientState), connections: make(map[uint64]*connectionState), newClient: factory}
+	return &Registry{clients: make(map[uint64]*clientState), connections: make(map[uint64]*connectionState), probes: make(map[uint64]*probeState), newClient: factory}
 }
 
 func (r *Registry) nextHandle() uint64 {
@@ -107,37 +108,16 @@ func (r *Registry) getConnection(id uint64) *connectionState {
 }
 
 func profileFromJSON(data []byte) (*appctlpb.ClientProfile, error) {
-	if len(data) == 0 || len(data) > MaxConfigSize {
-		return nil, errors.New("invalid configuration")
-	}
-	var keys map[string]json.RawMessage
-	if err := json.Unmarshal(data, &keys); err != nil || keys == nil {
-		return nil, errors.New("invalid configuration")
-	}
-	profile := &appctlpb.ClientProfile{}
-	_, hasProfiles := keys["profiles"]
-	if hasProfiles {
-		config := &appctlpb.ClientConfig{}
-		if err := protojson.Unmarshal(data, config); err != nil {
-			return nil, err
-		}
-		var selected *appctlpb.ClientProfile
-		for _, candidate := range config.GetProfiles() {
-			if candidate.GetProfileName() == config.GetActiveProfile() || config.GetActiveProfile() == "" && len(config.GetProfiles()) == 1 {
-				if selected != nil {
-					return nil, errors.New("ambiguous profile")
-				}
-				selected = candidate
-			}
-		}
-		if selected == nil {
-			return nil, errors.New("missing active profile")
-		}
-		profile = selected
-	} else if err := protojson.Unmarshal(data, profile); err != nil {
+	config, err := ParseConfiguration(data)
+	if err != nil {
 		return nil, err
 	}
-	return profile, nil
+	for _, p := range config.Profiles {
+		if p.GetProfileName() == config.GetActiveProfile() {
+			return p, nil
+		}
+	}
+	return nil, configError("Active profile is missing")
 }
 
 func (r *Registry) Store(id uint64, data []byte) int64 {
@@ -156,15 +136,21 @@ func (r *Registry) Store(id uint64, data []byte) int64 {
 	if started {
 		return Invalid
 	}
+	c.mu.Lock()
+	c.configured = false
+	c.mu.Unlock()
 	profile, err := profileFromJSON(data)
 	if err != nil {
+		c.setDiagnostic(diagnose("configuration", err))
 		return Invalid
 	}
 	if err = c.client.Store(&client.ClientConfig{Profile: profile, Resolver: net.DefaultResolver}); err != nil {
+		c.setDiagnostic(diagnose("configuration", err))
 		return Invalid
 	}
 	c.mu.Lock()
 	c.configured = true
+	c.diagnostic = Diagnostic{}
 	c.mu.Unlock()
 	return 0
 }
@@ -186,6 +172,7 @@ func (r *Registry) Start(id uint64) int64 {
 		return Invalid
 	}
 	if err := c.client.Start(); err != nil {
+		c.setDiagnostic(diagnose("client_start", err))
 		c.mu.Lock()
 		c.stopped = true
 		c.mu.Unlock()
@@ -194,6 +181,7 @@ func (r *Registry) Start(id uint64) int64 {
 	}
 	c.mu.Lock()
 	c.started = true
+	c.diagnostic = Diagnostic{}
 	c.mu.Unlock()
 	return 0
 }
@@ -304,9 +292,11 @@ func (r *Registry) Dial(id uint64, host string, port uint16, milliseconds int64)
 		if c.closed {
 			return Closed
 		}
+		c.diagnostic = diagnose("target_dial", ctx.Err())
 		return errorCode(ctx.Err())
 	}
 	if err != nil || connection == nil {
+		c.diagnostic = diagnose("target_dial", err)
 		if connection != nil {
 			interruptConnection(connection)
 		}

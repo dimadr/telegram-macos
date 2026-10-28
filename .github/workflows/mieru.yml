@@ -62,7 +62,6 @@ jobs:
           restore-keys: mieru-go-${{ runner.os }}-${{ runner.arch }}-
       - name: Go lifecycle and race tests
         id: go-tests
-        continue-on-error: true
         run: python3 scripts/run-mieru-ci.py go-tests bash native/mieru/test.sh
       - name: Build c-archive and verify C linkage
         run: |
@@ -129,9 +128,9 @@ jobs:
             packages/MieruTransport/.build
           key: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-499204963f090387c46fcfd4438f9bfd12e32fc3
           fail-on-cache-miss: true
-      - name: Compile Swift transport
+      - name: Compile and test Swift profiles, Keychain and transport
         if: env.MIERU_SQLITE_DIAGNOSTICS_ONLY != '1'
-        run: DEVELOPER_DIR="$MIERU_APP_DEVELOPER_DIR" python3 scripts/run-mieru-ci.py swift-transport swift build --package-path packages/MieruTransport
+        run: DEVELOPER_DIR="$MIERU_APP_DEVELOPER_DIR" python3 scripts/run-mieru-ci.py swift-transport swift test --package-path packages/MieruTransport
       - name: Inspect restored Swift cache
         run: node scripts/inspect-mieru-cache.cjs restored
       - name: Symbolicate reported SQLite crash from cached object

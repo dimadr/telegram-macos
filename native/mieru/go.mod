@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/enfein/mieru/v3 v3.39.0
 	google.golang.org/protobuf v1.34.2
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

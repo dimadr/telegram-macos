@@ -13,6 +13,7 @@ let package = Package(
         .target(name: "MieruTransport", dependencies: ["MieruABI", .product(name: "MtProtoKit", package: "MtProtoKit")], linkerSettings: [
             .unsafeFlags(["-L\(root)/native/mieru/build", "-lmieru"]),
             .linkedFramework("Security"), .linkedFramework("CoreFoundation"), .linkedLibrary("resolv")
-        ])
+        ]),
+        .testTarget(name: "MieruTransportTests", dependencies: ["MieruTransport", "MieruABI"])
     ]
 )

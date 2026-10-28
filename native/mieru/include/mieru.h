@@ -15,6 +15,12 @@ enum {
 };
 
 uint64_t MieruClientNew(void);
+int64_t MieruConfigNormalize(const char *data, int64_t length, void *output, int64_t capacity);
+int64_t MieruClientDiagnostic(uint64_t client, void *output, int64_t capacity);
+int64_t MieruConnectionDiagnostic(uint64_t connection, void *output, int64_t capacity);
+uint64_t MieruProbeNew(void);
+void MieruProbeCancel(uint64_t probe);
+int64_t MieruProbeRun(uint64_t probe, const char *data, int64_t length, const char *host, uint16_t port, int64_t timeout_ms, void *output, int64_t capacity);
 int32_t MieruClientStore(uint64_t client, const char *json, int64_t length);
 int32_t MieruClientStart(uint64_t client);
 void MieruClientStop(uint64_t client);
