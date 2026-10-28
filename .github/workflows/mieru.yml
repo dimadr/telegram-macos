@@ -159,7 +159,7 @@ jobs:
         continue-on-error: true
         run: python3 scripts/run-mieru-ci.py startup node scripts/smoke-mieru-app.cjs
       - name: Verify linkage and package the app
-        if: env.MIERU_SQLITE_DIAGNOSTICS_ONLY != '1'
+        if: env.MIERU_SQLITE_DIAGNOSTICS_ONLY != '1' && steps.startup-smoke.outcome == 'success'
         id: app-artifact
         run: python3 scripts/run-mieru-ci.py app-package bash scripts/package-mieru-ci-app.sh
       - uses: actions/upload-artifact@v4

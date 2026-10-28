@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 
 function edit(file, transform) {
-    const before = fs.readFileSync(file, 'utf8');
+    const before = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
     const after = transform(before);
     if (after === before) throw new Error('Expected identity change: ' + file);
     fs.writeFileSync(file, after);
@@ -54,6 +54,7 @@ edit('Telegram-Mac/app/AppDelegate.swift', text => {
     text += '\nprivate let telegramitaAutomaticUpdatesEnabled = false\n';
     text = text.replace(/^(\s*)(updater_resetWithUpdaterSource\([^\n]+\))\s*$/gm, '$1if telegramitaAutomaticUpdatesEnabled { $2 }');
     text = once(text, 'keychainScope: ApiEnvironment.prefix == "debug" ? "debug" : nil', 'keychainScope: "telegramita-v1"');
+    text = once(text, '        let bundleId = Bundle.main.bundleIdentifier\n        if let bundleId = bundleId {\n            LSSetDefaultHandlerForURLScheme("tg" as CFString, bundleId as CFString)\n        }', '');
     if (!text.includes('removeDatabaseOnError: true, accessChallenge:')) throw new Error('Missing account manager recovery policy');
     text = text.replaceAll('removeDatabaseOnError: true, accessChallenge:', 'removeDatabaseOnError: false, accessChallenge:');
     const marker = '        if let crash = self.rustEngineCrash {';

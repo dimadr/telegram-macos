@@ -1,6 +1,13 @@
 const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 
+function telegramHandler() {
+    const code = 'import Foundation; import CoreServices; if let value = LSCopyDefaultHandlerForURLScheme("tg" as CFString)?.takeRetainedValue() { print(value as String) } else { print("<none>") }';
+    const result = spawnSync('xcrun', ['swift', '-e', code], { encoding: 'utf8', timeout: 30000 });
+    if (result.status !== 0) throw new Error('Cannot inspect the existing tg URL handler');
+    return result.stdout.trim();
+}
+
 async function main() {
     const report = { status: 'NOT TESTED', scope: 'App process startup only; no Telegram account or Mieru server is configured' };
     const path = '.mieru-work/logs/startup-smoke.json';
@@ -14,6 +21,7 @@ async function main() {
     const root = require('node:path').join(require('node:os').homedir(), 'Library/Application Support/org.dimadr.Telegramita/v1');
     if (fs.existsSync(root)) throw new Error('First-launch test requires an absent Telegramita data root; existing data will not be removed');
     report.clean_storage_before_launch = true;
+    const previousHandler = telegramHandler();
     const output = fs.openSync('.mieru-work/logs/app-startup.log', 'w');
     let child;
     try {
@@ -27,7 +35,8 @@ async function main() {
         report.isolated_database = fs.existsSync(root + '/accounts-metadata/db/db_sqlite');
         report.atomic_state_created = fs.existsSync(root + '/accounts-metadata/atomic-state');
         report.account_manager_ready = fs.readFileSync('.mieru-work/logs/app-startup.log', 'utf8').includes('Telegramita account manager ready');
-        if (!report.isolated_database || !report.atomic_state_created || !report.account_manager_ready) report.status = 'FAIL';
+        report.tg_handler_unchanged = telegramHandler() === previousHandler;
+        if (!report.isolated_database || !report.atomic_state_created || !report.account_manager_ready || !report.tg_handler_unchanged) report.status = 'FAIL';
         report.exit_code = child.exitCode;
         report.signal = child.signalCode;
     } catch (error) {
