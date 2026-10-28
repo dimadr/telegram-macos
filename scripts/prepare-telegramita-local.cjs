@@ -59,7 +59,7 @@ edit('Telegram-Mac/app/AppDelegate.swift', text => {
     const marker = '        if let crash = self.rustEngineCrash {';
     return once(text, marker, `        let _ = accountManager.transaction { _ -> Void in
             FileHandle.standardError.write(Data("Telegramita account manager ready\\n".utf8))
-        }.start()
+        }.startStandalone()
 
 ` + marker);
 });
@@ -68,6 +68,9 @@ edit('submodules/telegram-ios/submodules/PasscodeCore/Sources/PasscodeKeychainSc
     const marker = '        return Self.migrateLegacyItems(passcodeService: passcodeService, walletServicePrefixes: walletServicePrefixes, environment: environment, keychain: Self.system)';
     return once(text, marker, '        if environment.keychainScope == "telegramita-v1" { return .nothingToMigrate }\n' + marker);
 });
+edit('submodules/telegram-ios/submodules/TelegramCore/Sources/AccountManager/AccountManagerImpl.swift', text => once(text,
+    '            if removeDatabaseOnError {\n                var legacyRecordDict:',
+    '            if removeDatabaseOnError || (isFreshInstallation && (e as NSError).domain == NSCocoaErrorDomain && (e as NSError).code == NSFileReadNoSuchFileError) {\n                var legacyRecordDict:'));
 edit('Telegram.xcodeproj/project.pbxproj', text => text.replaceAll('ru.keepcoder.Telegram', 'org.dimadr.Telegramita'));
 edit('submodules/telegram-ios/submodules/Postbox/Sources/SqliteValueBox.swift', text => {
     text = once(text, 'import Foundation', 'import Foundation\nimport Darwin');

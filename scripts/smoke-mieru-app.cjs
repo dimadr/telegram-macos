@@ -24,9 +24,10 @@ async function main() {
             child.once('exit', () => { clearTimeout(timer); resolve(); });
         });
         report.status = child.exitCode === null && child.signalCode === null ? 'PASS' : 'FAIL';
-        report.isolated_database = fs.existsSync(root + '/accounts-metadata/db_sqlite');
+        report.isolated_database = fs.existsSync(root + '/accounts-metadata/db/db_sqlite');
+        report.atomic_state_created = fs.existsSync(root + '/accounts-metadata/atomic-state');
         report.account_manager_ready = fs.readFileSync('.mieru-work/logs/app-startup.log', 'utf8').includes('Telegramita account manager ready');
-        if (!report.isolated_database || !report.account_manager_ready) report.status = 'FAIL';
+        if (!report.isolated_database || !report.atomic_state_created || !report.account_manager_ready) report.status = 'FAIL';
         report.exit_code = child.exitCode;
         report.signal = child.signalCode;
     } catch (error) {
