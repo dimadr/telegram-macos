@@ -1,0 +1,348 @@
+diff --git a/submodules/MTProtoRustEngine/Package.swift b/submodules/MTProtoRustEngine/Package.swift
+index 0820d69..22b0e6d 100644
+--- a/submodules/MTProtoRustEngine/Package.swift
++++ b/submodules/MTProtoRustEngine/Package.swift
+@@ -11,6 +11,7 @@ let package = Package(
+             targets: ["MTProtoRustEngine", "MTProtoRustEngineMapping"]),
+     ],
+     dependencies: [
++        .package(name: "MieruTransport", path: "../../../../packages/MieruTransport"),
+         .package(name: "TelegramCore", path: "../TelegramCore"),
+         .package(name: "MtProtoKit", path: "../MtProtoKit"),
+         .package(name: "SSignalKit", path: "../SSignalKit"),
+@@ -28,6 +29,7 @@ let package = Package(
+         .target(
+             name: "MTProtoRustEngine",
+             dependencies: [
++                .product(name: "MieruTransport", package: "MieruTransport"),
+                 "MTProtoEngineFFI",
+                 "MTProtoRustEngineMapping",
+                 .product(name: "TelegramCore", package: "TelegramCore", condition: nil),
+diff --git a/submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/MieruStreamHost.swift b/submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/MieruStreamHost.swift
+new file mode 100644
+index 0000000..2c8777c
+--- /dev/null
++++ b/submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/MieruStreamHost.swift
+@@ -0,0 +1,96 @@
++import Foundation
++import MieruTransport
++import MTProtoEngineFFI
++
++final class MieruStreamHost {
++    private let engine: OpaquePointer
++    private let queue = DispatchQueue(label: "Telegramita.Mieru.rust")
++    private var sockets: [UInt64: MieruSocket] = [:]
++    private var paused = Set<UInt64>()
++
++    init(engine: OpaquePointer) { self.engine = engine }
++
++    func open(stream: UInt64, host: String, port: UInt16, unsupported: Bool) {
++        self.queue.async {
++            guard !unsupported, port != 0 else {
++                MieruRuntime.shared.report(MieruError.unsupported.message)
++                self.reportClosed(stream: stream)
++                return
++            }
++            do {
++                let socket = try MieruRuntime.shared.makeSocket(queue: self.queue)
++                self.sockets.removeValue(forKey: stream)?.close()
++                self.sockets[stream] = socket
++                socket.connect(host: host, port: port, timeout: 15) { [weak self, weak socket] result in
++                    guard let self = self, let socket = socket, self.sockets[stream] === socket else { return }
++                    switch result {
++                    case .success:
++                        mt_stream_opened(self.engine, stream)
++                        self.receive(stream: stream, socket: socket)
++                    case let .failure(error): self.fail(stream: stream, error: error)
++                    }
++                }
++            } catch {
++                self.fail(stream: stream, error: error as? MieruError ?? .network)
++            }
++        }
++    }
++
++    func write(stream: UInt64, data: Data) {
++        self.queue.async {
++            guard let socket = self.sockets[stream] else { return }
++            socket.write(data) { [weak self, weak socket] result in
++                guard let self = self, let socket = socket, self.sockets[stream] === socket else { return }
++                switch result {
++                case .success: mt_stream_sent(self.engine, stream, data.count)
++                case let .failure(error): self.fail(stream: stream, error: error)
++                }
++            }
++        }
++    }
++
++    func close(stream: UInt64) {
++        self.queue.async {
++            self.paused.remove(stream)
++            self.sockets.removeValue(forKey: stream)?.close()
++        }
++    }
++
++    func resume(stream: UInt64) {
++        self.queue.async {
++            if self.paused.remove(stream) != nil, let socket = self.sockets[stream] {
++                self.receive(stream: stream, socket: socket)
++            }
++        }
++    }
++
++    private func receive(stream: UInt64, socket: MieruSocket) {
++        socket.read(maximum: 256 * 1024, timeout: -1) { [weak self, weak socket] result in
++            guard let self = self, let socket = socket, self.sockets[stream] === socket else { return }
++            switch result {
++            case let .success(data):
++                let more = data.withUnsafeBytes {
++                    mt_stream_received(self.engine, stream, MTBytes(data: $0.baseAddress?.assumingMemoryBound(to: UInt8.self), length: $0.count)) != 0
++                }
++                if more { self.receive(stream: stream, socket: socket) }
++                else { self.paused.insert(stream) }
++            case let .failure(error): self.fail(stream: stream, error: error)
++            }
++        }
++    }
++
++    private func fail(stream: UInt64, error: MieruError) {
++        self.paused.remove(stream)
++        self.sockets.removeValue(forKey: stream)?.close()
++        MieruRuntime.shared.report(error.message)
++        self.reportClosed(stream: stream)
++    }
++
++    private func reportClosed(stream: UInt64) {
++        "Mieru stream closed".withCString {
++            mt_stream_closed(self.engine, stream, MTString(data: $0, length: strlen($0)))
++        }
++    }
++
++    deinit { for socket in self.sockets.values { socket.close() } }
++}
+diff --git a/submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/RustEngineRuntime.swift b/submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/RustEngineRuntime.swift
+index 21ee899..1eccd1c 100644
+--- a/submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/RustEngineRuntime.swift
++++ b/submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/RustEngineRuntime.swift
+@@ -1,4 +1,5 @@
+ import Foundation
++import MieruTransport
+ #if canImport(AppKit)
+ import AppKit
+ #endif
+@@ -151,6 +152,7 @@ final class RustEngineRuntime: NSObject, MTNetworkAvailabilityDelegate {
+     private var isNetworkAvailableValue: Bool = true
+     private let networkQueue = DispatchQueue(label: "org.telegram.MTProtoRust.network")
+     private var networkWatcher: RustNetworkWatcher?
++    private var mieruStreamHost: MieruStreamHost?
+     private var streamHost: AnyObject?
+     private var carrierStreams: RustCarrierStreams?
+     private var carrierStreamIds = Set<UInt64>()
+@@ -169,6 +171,9 @@ final class RustEngineRuntime: NSObject, MTNetworkAvailabilityDelegate {
+             return
+         }
+         self.engine = mt_engine_create(0, Unmanaged.passUnretained(self).toOpaque(), rustEngineEventCallback, rustEngineLogCallback)
++        if MieruRuntime.shared.enabled, let engine = self.engine {
++            mt_engine_require_stream_host(engine, 1)
++        }
+     }
+ 
+     private func start() {
+@@ -188,10 +193,14 @@ final class RustEngineRuntime: NSObject, MTNetworkAvailabilityDelegate {
+         }
+         networkWatcher.start()
+         if let engine = self.engine {
+-            if #available(macOS 10.14, iOS 12.0, *) {
+-                self.streamHost = RustStreamHost(engine: engine)
++            if MieruRuntime.shared.enabled {
++                self.mieruStreamHost = MieruStreamHost(engine: engine)
++            } else {
++                if #available(macOS 10.14, iOS 12.0, *) {
++                    self.streamHost = RustStreamHost(engine: engine)
++                }
++                self.carrierStreams = RustCarrierStreams(engine: engine)
+             }
+-            self.carrierStreams = RustCarrierStreams(engine: engine)
+             var callbacks = rustStreamHostCallbacks()
+             mt_engine_set_stream_host(engine, &callbacks)
+         }
+@@ -260,6 +269,10 @@ final class RustEngineRuntime: NSObject, MTNetworkAvailabilityDelegate {
+     }
+ 
+     func openStream(_ stream: UInt64, host: String, port: UInt16, serverName: String?, alpn: [String], carrier: Bool) {
++        if MieruRuntime.shared.enabled {
++            self.mieruStreamHost?.open(stream: stream, host: host, port: port, unsupported: carrier || serverName != nil)
++            return
++        }
+         if carrier, let carrierStreams = self.carrierStreams {
+             self.lock.lock()
+             self.carrierStreamIds.insert(stream)
+@@ -275,6 +288,7 @@ final class RustEngineRuntime: NSObject, MTNetworkAvailabilityDelegate {
+     }
+ 
+     func writeStream(_ stream: UInt64, data: Data) {
++        if MieruRuntime.shared.enabled { self.mieruStreamHost?.write(stream: stream, data: data); return }
+         if self.isCarrierStream(stream) {
+             self.carrierStreams?.write(stream: stream, data: data)
+         } else if #available(macOS 10.14, iOS 12.0, *), let streamHost = self.streamHost as? RustStreamHost {
+@@ -283,6 +297,7 @@ final class RustEngineRuntime: NSObject, MTNetworkAvailabilityDelegate {
+     }
+ 
+     func closeStream(_ stream: UInt64) {
++        if MieruRuntime.shared.enabled { self.mieruStreamHost?.close(stream: stream); return }
+         self.lock.lock()
+         let carrier = self.carrierStreamIds.remove(stream) != nil
+         self.lock.unlock()
+@@ -294,6 +309,7 @@ final class RustEngineRuntime: NSObject, MTNetworkAvailabilityDelegate {
+     }
+ 
+     func resumeStream(_ stream: UInt64) {
++        if MieruRuntime.shared.enabled { self.mieruStreamHost?.resume(stream: stream); return }
+         if self.isCarrierStream(stream) {
+             self.carrierStreams?.resume(stream: stream)
+         } else if #available(macOS 10.14, iOS 12.0, *), let streamHost = self.streamHost as? RustStreamHost {
+diff --git a/submodules/TelegramCore/Package.swift b/submodules/TelegramCore/Package.swift
+index 522a92d..daba0b8 100644
+--- a/submodules/TelegramCore/Package.swift
++++ b/submodules/TelegramCore/Package.swift
+@@ -20,6 +20,7 @@ let package = Package(
+         .package(name: "Postbox", path: "../Postbox"),
+         .package(name: "SSignalKit", path: "../SSignalKit"),
+         .package(name: "MtProtoKit", path: "../MtProtoKit"),
++        .package(name: "MieruTransport", path: "../../../../packages/MieruTransport"),
+         .package(name: "WebProxyTransport", path: "../WebProxyTransport"),
+         .package(name: "TelegramApi", path: "../TelegramApi"),
+         .package(name: "CryptoUtils", path: "../CryptoUtils"),
+@@ -38,6 +39,7 @@ let package = Package(
+             dependencies: [.product(name: "Postbox", package: "Postbox", condition: nil),
+                             .product(name: "SwiftSignalKit", package: "SSignalKit", condition: nil),
+                             .product(name: "MtProtoKit", package: "MtProtoKit", condition: nil),
++                           .product(name: "MieruTransport", package: "MieruTransport", condition: nil),
+                            .product(name: "WebProxyTransport", package: "WebProxyTransport", condition: nil),
+                            .product(name: "TelegramApi", package: "TelegramApi", condition: nil),
+                            .product(name: "CryptoUtils", package: "CryptoUtils", condition: nil),
+diff --git a/submodules/TelegramCore/Sources/Network/FetchHttpResource.swift b/submodules/TelegramCore/Sources/Network/FetchHttpResource.swift
+index 6133e87..3ddafa3 100644
+--- a/submodules/TelegramCore/Sources/Network/FetchHttpResource.swift
++++ b/submodules/TelegramCore/Sources/Network/FetchHttpResource.swift
+@@ -1,9 +1,11 @@
+ import Foundation
++import MieruTransport
+ import Postbox
+ import SwiftSignalKit
+ import MtProtoKit
+ 
+ public func fetchHttpResource(url: String, preserveExactUrl: Bool = false) -> Signal<MediaResourceDataFetchResult, MediaResourceDataFetchError> {
++    if MieruRuntime.shared.enabled { return .fail(.generic) }
+     var urlString: String? = url
+     if !preserveExactUrl {
+         urlString = url.addingPercentEncoding(withAllowedCharacters: CharacterSet.urlQueryAllowed)
+diff --git a/submodules/TelegramCore/Sources/Network/Network.swift b/submodules/TelegramCore/Sources/Network/Network.swift
+index 7a8db1d..a29feaf 100644
+--- a/submodules/TelegramCore/Sources/Network/Network.swift
++++ b/submodules/TelegramCore/Sources/Network/Network.swift
+@@ -1,4 +1,5 @@
+ import Foundation
++import MieruTransport
+ import WebProxyTransport
+ import Postbox
+ internal import TelegramApi
+@@ -550,7 +551,7 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
+             apiEnvironment.disableUpdates = supplementary
+             apiEnvironment = apiEnvironment.withUpdatedLangPackCode(languageCode ?? "en")
+             
+-            if let effectiveActiveServer = proxySettings?.effectiveActiveServer {
++            if !MieruRuntime.shared.enabled, let effectiveActiveServer = proxySettings?.effectiveActiveServer {
+                 apiEnvironment = apiEnvironment.withUpdatedSocksProxySettings(effectiveActiveServer.mtProxySettings)
+             }
+             
+@@ -598,9 +599,14 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
+                 }
+             }
+ 
++            if MieruRuntime.shared.enabled {
++                context.makeTcpConnectionInterface = { delegate, delegateQueue in
++                    return MieruTcpConnection(delegate: delegate, queue: delegateQueue)
++                }
++            }
+             let baseTcpConnectionInterfaceFactory = context.makeTcpConnectionInterface
+             let isAppExtension = Bundle.main.bundlePath.hasSuffix(".appex")
+-            let initialActiveServer = proxySettings?.effectiveActiveServer
++            let initialActiveServer = MieruRuntime.shared.enabled ? nil : proxySettings?.effectiveActiveServer
+             let initialWebProxyConfiguration = initialActiveServer?.webProxyConfiguration
+             WebProxyTransport.shared.apply(configuration: isAppExtension ? nil : initialWebProxyConfiguration)
+             if initialActiveServer?.isWebProxy == true {
+@@ -658,7 +664,7 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
+             }
+             #endif
+             
+-            if !supplementary {
++            if !supplementary && !MieruRuntime.shared.enabled {
+                 context.setDiscoverBackupAddressListSignal(MTBackupAddressSignals.fetchBackupIps(testingEnvironment, currentContext: context, additionalSource: wrappedAdditionalSource, phoneNumber: phoneNumber, mainDatacenterId: datacenterId))
+                 let externalRequestVerificationStream = arguments.externalRequestVerificationStream
+                 context.setExternalRequestVerification({ nonce in
+@@ -698,7 +704,7 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
+             }
+             
+             /*#if DEBUG
+-            context.beginExplicitBackupAddressDiscovery()
++            if !MieruRuntime.shared.enabled { context.beginExplicitBackupAddressDiscovery() }
+             #endif*/
+             
+             var rustDisabledReason = networkEngineRustDisabledReason(appConfiguration: appConfiguration, engineState: networkEngine.state, appVersion: arguments.appVersion, timestamp: Int32(Date().timeIntervalSince1970))
+@@ -1116,6 +1122,7 @@ public final class Network: NSObject {
+                     return switchingEngine?.networkIdentity()
+                 },
+                 probeUnavailable: { [weak context] in
++                    if MieruRuntime.shared.enabled { return "Mieru requires host streams" }
+                     return context?.apiEnvironment.socksProxySettings?.webProxy == true ? "a WEB proxy, which MtProtoKit's probe cannot use" : nil
+                 },
+                 probe: { [weak context] timeout in
+@@ -1178,6 +1185,7 @@ public final class Network: NSObject {
+     }
+ 
+     func updateProxySettings(_ activeServer: ProxyServerSettings?) {
++        if MieruRuntime.shared.enabled { return }
+         let webConfiguration = activeServer?.webProxyConfiguration
+         WebProxyTransport.shared.apply(configuration: self.isAppExtension ? nil : webConfiguration)
+         self.webProxyActive.set(activeServer?.isWebProxy == true)
+diff --git a/submodules/TelegramCore/Sources/Network/NetworkLivenessFallback.swift b/submodules/TelegramCore/Sources/Network/NetworkLivenessFallback.swift
+index c28673e..20d6325 100644
+--- a/submodules/TelegramCore/Sources/Network/NetworkLivenessFallback.swift
++++ b/submodules/TelegramCore/Sources/Network/NetworkLivenessFallback.swift
+@@ -1,4 +1,5 @@
+ import Foundation
++import MieruTransport
+ import SwiftSignalKit
+ import MtProtoKit
+ 
+@@ -129,6 +130,7 @@ public func networkLivenessSleptSeconds() -> Double {
+ 
+ /// MtProtoKit's TCP probe of the datacenter (see `NetworkLivenessPolicy`).
+ func networkLivenessMtProtoKitProbe(context: MTContext, datacenterId: Int, timeout: Double) -> Signal<Bool, NoError> {
++    if MieruRuntime.shared.enabled { return .single(false) }
+     return Signal { subscriber in
+         let disposable = MTProxyConnectivity.probeDatacenter(with: context, datacenterId: datacenterId, timeout: timeout).start(next: { value in
+             subscriber.putNext((value as? NSNumber)?.boolValue ?? false)
+diff --git a/submodules/TelegramCore/Sources/Network/ProxyServersStatuses.swift b/submodules/TelegramCore/Sources/Network/ProxyServersStatuses.swift
+index 7cd12a0..b7d6964 100644
+--- a/submodules/TelegramCore/Sources/Network/ProxyServersStatuses.swift
++++ b/submodules/TelegramCore/Sources/Network/ProxyServersStatuses.swift
+@@ -1,4 +1,5 @@
+ import Foundation
++import MieruTransport
+ import SwiftSignalKit
+ import MtProtoKit
+ 
+@@ -14,6 +15,11 @@ private final class ProxyServerItemContext {
+     var value: ProxyServerStatus = .checking
+     
+     init(queue: Queue, context: MTContext, datacenterId: Int, server: ProxyServerSettings, updated: @escaping (ProxyServerStatus) -> Void) {
++        if MieruRuntime.shared.enabled {
++            self.value = .notAvailable
++            updated(.notAvailable)
++            return
++        }
+         self.disposable = (Signal<ProxyServerStatus, NoError> { subscriber in
+             let disposable = MTProxyConnectivity.pingProxy(with: context, datacenterId: datacenterId, settings: server.mtProxySettings).start(next: { next in
+                 if let next = next as? MTProxyConnectivityStatus {

@@ -1,0 +1,111 @@
+package client_test
+
+import (
+	"context"
+	"io"
+	"net"
+	"testing"
+	"time"
+
+	"github.com/enfein/mieru/v3/apis/client"
+	"github.com/enfein/mieru/v3/apis/constant"
+	"github.com/enfein/mieru/v3/apis/internal"
+	"github.com/enfein/mieru/v3/apis/model"
+	"github.com/enfein/mieru/v3/pkg/appctl/appctlpb"
+	"google.golang.org/protobuf/encoding/protojson"
+)
+
+type telegramitaPipeDialer struct {
+	connection net.Conn
+}
+
+func (d telegramitaPipeDialer) DialContext(context.Context, string, string) (net.Conn, error) {
+	return d.connection, nil
+}
+
+func TestTelegramitaOfficialDialContextCancellation(t *testing.T) {
+	local, peer := net.Pipe()
+	defer peer.Close()
+	drained := make(chan struct{})
+	go func() { io.Copy(io.Discard, peer); close(drained) }()
+	profile := &appctlpb.ClientProfile{}
+	if err := protojson.Unmarshal([]byte(`{"profileName":"cancel","user":{"name":"unit-user","password":"test-secret"},"servers":[{"ipAddress":"127.0.0.1","portBindings":[{"port":10001,"protocol":"TCP"}]}],"handshakeMode":"HANDSHAKE_STANDARD"}`), profile); err != nil {
+		t.Fatal(err)
+	}
+	instance := client.NewClient()
+	if err := instance.Store(&client.ClientConfig{Profile: profile, Dialer: telegramitaPipeDialer{local}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		connection, err := instance.DialContext(ctx, &net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 443})
+		if connection != nil {
+			connection.Close()
+		}
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("canceled official handshake succeeded")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("official DialContext ignored cancellation during handshake")
+	}
+	peer.Close()
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("in-memory proxy transport was not released")
+	}
+}
+
+func TestTelegramitaEarlyCloseDuringHandshake(t *testing.T) {
+	local, peer := net.Pipe()
+	defer peer.Close()
+	early := internal.NewEarlyConn(local)
+	address := model.AddrSpec{}
+	if err := address.From("destination.invalid:443"); err != nil {
+		t.Fatal(err)
+	}
+	early.SetRequest(&model.Request{Command: constant.Socks5ConnectCmd, DstAddr: address})
+	writeDone := make(chan error, 1)
+	go func() { _, err := early.Write([]byte("payload")); writeDone <- err }()
+	if _, err := peer.Read(make([]byte, 256)); err != nil {
+		t.Fatal(err)
+	}
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- early.Close() }()
+	for _, result := range []<-chan error{writeDone, closeDone} {
+		select {
+		case <-result:
+		case <-time.After(time.Second):
+			t.Fatal("official EarlyConn close waited for the handshake timeout")
+		}
+	}
+}
+
+func TestTelegramitaEarlyCloseBeforeWrite(t *testing.T) {
+	local, peer := net.Pipe()
+	defer peer.Close()
+	early := internal.NewEarlyConn(local)
+	readDone := make(chan error, 1)
+	go func() { _, err := early.Read(make([]byte, 1)); readDone <- err }()
+	if err := early.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-readDone:
+		if err == nil || err == io.EOF {
+			t.Fatal("read before write did not report closed connection")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("official EarlyConn Read did not unblock")
+	}
+}

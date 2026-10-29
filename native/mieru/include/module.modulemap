@@ -1,0 +1,4 @@
+module MieruC {
+    header "mieru.h"
+    export *
+}

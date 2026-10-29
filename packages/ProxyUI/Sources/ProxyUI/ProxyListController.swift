@@ -12,14 +12,17 @@ import GeneralRows
 import InputDataUI
 import AlertsUI
 import ProxyUtils
+import MieruTransport
 
 private let _p_id_enable: InputDataIdentifier = InputDataIdentifier("_p_id_enable")
 private let _p_id_add: InputDataIdentifier = InputDataIdentifier("_p_id_add")
 private let _id_calls: InputDataIdentifier = InputDataIdentifier("_id_calls")
 private struct ProxyListState : Equatable {
     let settings: ProxySettings
+    let mieru: MieruSnapshot
     init(settings: ProxySettings = ProxySettings.defaultSettings) {
         self.settings = settings
+        self.mieru = MieruRuntime.shared.snapshot
     }
     
     func withUpdatedSettings(_ settings: ProxySettings) -> ProxyListState {
@@ -68,6 +71,15 @@ private func proxyListSettingsEntries(_ state: ProxyListState, status: Connectio
     var sectionId: Int32 = 0
     var index: Int32 = 0
     
+    entries.append(.sectionId(sectionId, type: .normal))
+    sectionId += 1
+
+    entries.append(.custom(sectionId: sectionId, index: index, value: .string(nil), identifier: InputDataIdentifier("mieru_enable"), equatable: InputDataEquatable(state.mieru), comparable: nil, item: { size, stableId in
+        GeneralInteractedRowItem(size, stableId: stableId, name: "Mieru", type: .next, viewType: .singleItem, action: arguments.openMieru)
+    }))
+    index += 1
+    entries.append(.desc(sectionId: sectionId, index: index, text: .plain(state.mieru.status + "\nChanges apply after restart. While active, Mieru overrides proxy selection; calls, HTTP/WebSocket and sharing are disabled."), data: InputDataGeneralTextData(viewType: .textBottomItem)))
+    index += 1
     entries.append(.sectionId(sectionId, type: .normal))
     sectionId += 1
     
@@ -173,13 +185,15 @@ private final class ProxyListArguments {
     let disconnect:()->Void
     let reconnectLatest:()->Void
     let enableForCalls:(Bool)->Void
-    init(edit:@escaping(ProxyServerSettings?)->Void, delete: @escaping(ProxyServerSettings)->Void, connect: @escaping(ProxyServerSettings)->Void, disconnect: @escaping()->Void, reconnectLatest:@escaping()->Void, enableForCalls:@escaping(Bool)->Void) {
+    let openMieru: () -> Void
+    init(edit:@escaping(ProxyServerSettings?)->Void, delete: @escaping(ProxyServerSettings)->Void, connect: @escaping(ProxyServerSettings)->Void, disconnect: @escaping()->Void, reconnectLatest:@escaping()->Void, enableForCalls:@escaping(Bool)->Void, openMieru: @escaping () -> Void) {
         self.edit = edit
         self.delete = delete
         self.connect = connect
         self.disconnect = disconnect
         self.reconnectLatest = reconnectLatest
         self.enableForCalls = enableForCalls
+        self.openMieru = openMieru
     }
 }
 
@@ -209,6 +223,11 @@ public func proxyListController(accountManager: AccountManager<TelegramAccountMa
     let updateState:(_ f:(ProxyListState)->ProxyListState)-> Void = { f in
         statePromise.set(stateValue.modify(f))
     }
+
+    let mieruObserver = NotificationCenter.default.addObserver(forName: MieruRuntime.changed, object: nil, queue: .main) { _ in
+        updateState { ProxyListState(settings: $0.settings) }
+    }
+    actionsDisposable.add(ActionDisposable { NotificationCenter.default.removeObserver(mieruObserver) })
     
     actionsDisposable.add((proxySettings(accountManager: accountManager) |> deliverOnPrepareQueue).start(next: { settings in
         updateState { current in
@@ -242,6 +261,8 @@ public func proxyListController(accountManager: AccountManager<TelegramAccountMa
         }).start())
     }, enableForCalls: { enable in
         updateDisposable.set(updateProxySettingsInteractively(accountManager: accountManager, {$0.withUpdatedUseForCalls(enable)}).start())
+    }, openMieru: {
+        pushController(mieruSettingsController(pushController: pushController))
     })
     
     let controller = InputDataController(dataSignal: combineLatest(queue: prepareQueue, statePromise.get(), network.connectionStatus, statuses.statuses(), appearanceSignal) |> map {proxyListSettingsEntries($0.0, status: $0.1, statuses: $0.2, arguments: arguments, showUseCalls: showUseCalls)} |> map { InputDataSignalValue(entries: $0) }, title: strings().proxySettingsTitle, validateData: {
@@ -253,8 +274,6 @@ public func proxyListController(accountManager: AccountManager<TelegramAccountMa
         
         
         return .fail(.none)
-    }, afterDisappear: {
-        actionsDisposable.dispose()
     }, removeAfterDisappear: false, hasDone: false, identifier: "proxy", afterTransaction: { controller in
         controller.rightBarView.isHidden = stateValue.with { $0.settings.servers.isEmpty }
     })

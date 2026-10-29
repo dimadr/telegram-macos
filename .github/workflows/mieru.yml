@@ -1,0 +1,229 @@
+name: Mieru macOS arm64 app
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mieru-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  app:
+    if: github.head_ref == 'codex/mieru-client-api' || github.ref == 'refs/heads/codex/mieru-client-api'
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      MIERU_SQLITE_DIAGNOSTICS_ONLY: "0"
+      MIERU_CI_BUILD_MINUTES: "115"
+      MIERU_CI_LEGACY_APP_ICON: "1"
+      GOCACHE: ${{ github.workspace }}/.mieru-work/go-cache
+      GOMODCACHE: ${{ github.workspace }}/.mieru-work/go-modules
+      GOTMPDIR: ${{ github.workspace }}/.mieru-work/go-tmp
+      GOTOOLCHAIN: local
+      MIERU_TEST_RACE: "1"
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      NSUnbufferedIO: "YES"
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      MIERU_NATIVE_DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      MIERU_APP_DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - name: Start the single CI budget
+        run: echo "MIERU_CI_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - run: mkdir -p "$GOCACHE" "$GOMODCACHE" "$GOTMPDIR" .mieru-work/logs
+      - name: Verify native and app toolchains
+        run: |
+          test -d "$MIERU_NATIVE_DEVELOPER_DIR"
+          test -d "$MIERU_APP_DEVELOPER_DIR"
+          xcodebuild -version | tee .mieru-work/logs/native-xcode.log
+          DEVELOPER_DIR="$MIERU_APP_DEVELOPER_DIR" xcodebuild -version | tee .mieru-work/logs/app-xcode.log
+          echo "MIERU_APP_XCODE_VERSION=$(DEVELOPER_DIR="$MIERU_APP_DEVELOPER_DIR" xcodebuild -version | head -1 | awk '{print $2}')" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.x
+          cache: false
+      - uses: actions/cache/restore@v4
+        id: go-cache
+        with:
+          path: |
+            .mieru-work/go-cache
+            .mieru-work/go-modules
+            native/mieru/build
+          key: mieru-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/mieru/**') }}
+          restore-keys: mieru-go-${{ runner.os }}-${{ runner.arch }}-
+      - name: Go lifecycle and race tests
+        id: go-tests
+        run: python3 scripts/run-mieru-ci.py go-tests bash native/mieru/test.sh
+      - name: Build c-archive and verify C linkage
+        run: |
+          python3 scripts/run-mieru-ci.py c-archive bash native/mieru/build.sh
+          python3 scripts/run-mieru-ci.py c-link clang -I native/mieru/include native/mieru/tests/abi_smoke.c native/mieru/build/libmieru.a -framework Security -framework CoreFoundation -lresolv -lpthread -o .mieru-work/abi-smoke
+          python3 scripts/run-mieru-ci.py c-abi .mieru-work/abi-smoke
+      - name: Prepare native app dependencies
+        run: python3 scripts/run-mieru-ci.py dependencies bash scripts/prepare-mieru-ci.sh
+      - uses: actions/cache/restore@v4
+        id: native-cache
+        with:
+          path: |
+            core-xprojects/**/build
+            submodules/*/SharedHeaders
+            submodules/telegram-ios/submodules/*/SharedHeaders
+            submodules/telegram-ios/submodules/MTProtoRustEngine/MTProtoEngineFFI.xcframework
+            packages/WalletEngine/wallet_engineFFI.xcframework
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.rustup/toolchains
+          key: mieru-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.gitmodules', 'core-xprojects/**', 'patches/mieru/**', 'scripts/framework-inputs.sh', 'scripts/prepare-mieru-ci.sh') }}
+          restore-keys: mieru-native-${{ runner.os }}-${{ runner.arch }}-
+      - name: Prepare sparse Swift cache extraction
+        run: |
+          mkdir -p .mieru-work/cache-tools
+          cp scripts/mieru-cache-tar.sh .mieru-work/cache-tools/gtar
+          chmod +x .mieru-work/cache-tools/gtar
+          go build -o .mieru-work/cache-tools/mieru-sparse-tar scripts/mieru-sparse-tar.go
+          echo "MIERU_CACHE_TOOL_PATH=$GITHUB_WORKSPACE/.mieru-work/cache-tools:$PATH" >> "$GITHUB_ENV"
+          mkdir -p .mieru-work/DerivedData/CompilationCache.noindex
+          hdiutil create -size 100g -type SPARSE -fs APFS -volname MieruCompilationCache .mieru-work/cas.sparseimage > .mieru-work/logs/sparse-volume.log
+          hdiutil attach -nobrowse -mountpoint "$GITHUB_WORKSPACE/.mieru-work/DerivedData/CompilationCache.noindex" .mieru-work/cas.sparseimage >> .mieru-work/logs/sparse-volume.log
+          python3 scripts/verify-mieru-sparse-cache.py
+      - uses: actions/cache/restore@v4
+        id: swift-cache
+        env:
+          PATH: ${{ env.MIERU_CACHE_TOOL_PATH }}
+        with:
+          path: |
+            .mieru-work/DerivedData/Build/Intermediates.noindex
+            .mieru-work/DerivedData/ModuleCache.noindex
+            .mieru-work/DerivedData/CompilationCache.noindex
+            .mieru-work/DerivedData/Build/Products/**/*.o
+            .mieru-work/DerivedData/Build/Products/**/*.a
+            .mieru-work/DerivedData/Build/Products/**/*.h
+            .mieru-work/DerivedData/Build/Products/**/*.modulemap
+            .mieru-work/DerivedData/Build/Products/**/*.swiftmodule
+            .mieru-work/DerivedData/Build/Products/**/*.swiftinterface
+            .mieru-work/DerivedData/Build/Products/**/*.swiftdoc
+            .mieru-work/DerivedData/Build/Products/**/*.swiftsourceinfo
+            .mieru-work/DerivedData/Build/Products/**/*.abi.json
+            packages/MieruTransport/.build
+          key: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-
+      - name: Recover CI 5 Swift cache when expanded cache is absent
+        if: steps.swift-cache.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@v4
+        env:
+          PATH: ${{ env.MIERU_CACHE_TOOL_PATH }}
+        with:
+          path: |
+            .mieru-work/DerivedData/Build/Intermediates.noindex
+            .mieru-work/DerivedData/ModuleCache.noindex
+            packages/MieruTransport/.build
+          key: mieru-swift-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-499204963f090387c46fcfd4438f9bfd12e32fc3
+          fail-on-cache-miss: true
+      - name: Compile and test Swift profiles, Keychain and transport
+        if: env.MIERU_SQLITE_DIAGNOSTICS_ONLY != '1'
+        run: DEVELOPER_DIR="$MIERU_APP_DEVELOPER_DIR" python3 scripts/run-mieru-ci.py swift-transport swift test --package-path packages/MieruTransport
+      - name: Inspect restored Swift cache
+        run: node scripts/inspect-mieru-cache.cjs restored
+      - name: Symbolicate reported SQLite crash from cached object
+        if: env.MIERU_SQLITE_DIAGNOSTICS_ONLY == '1'
+        run: python3 scripts/diagnose-telegramita-sqlite.py
+      - uses: actions/cache/restore@v4
+        id: package-cache
+        with:
+          path: |
+            .mieru-work/DerivedData/SourcePackages
+            ~/Library/Caches/org.swift.swiftpm/manifests
+          key: mieru-packages-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: mieru-packages-${{ runner.os }}-${{ runner.arch }}-${{ env.MIERU_APP_XCODE_VERSION }}-
+      - name: Build the complete arm64 app
+        if: env.MIERU_SQLITE_DIAGNOSTICS_ONLY != '1'
+        run: python3 scripts/run-mieru-ci.py app bash scripts/build-mieru-app.sh
+      - name: Inspect final Swift cache
+        if: always()
+        run: node scripts/inspect-mieru-cache.cjs final
+      - name: Seal local ad-hoc app bundle
+        run: bash scripts/sign-telegramita-local.sh > .mieru-work/logs/local-signing.log 2>&1
+      - name: Smoke-test app startup
+        if: env.MIERU_SQLITE_DIAGNOSTICS_ONLY != '1'
+        id: startup-smoke
+        continue-on-error: true
+        run: python3 scripts/run-mieru-ci.py startup node scripts/smoke-mieru-app.cjs
+      - name: Verify linkage and package the app
+        if: env.MIERU_SQLITE_DIAGNOSTICS_ONLY != '1' && steps.startup-smoke.outcome == 'success'
+        id: app-artifact
+        run: python3 scripts/run-mieru-ci.py app-package bash scripts/package-mieru-ci-app.sh
+      - uses: actions/upload-artifact@v4
+        if: steps.app-artifact.outcome == 'success'
+        with:
+          name: Telegramita-macOS-arm64-encrypted
+          path: |
+            .mieru-work/Telegramita-macOS-arm64-unsigned.zip.enc
+            .mieru-work/Telegramita-macOS-arm64-unsigned.sha256
+          retention-days: 7
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mieru-diagnostics
+          path: .mieru-work/logs
+          retention-days: 7
+      - name: Preserve test failure status
+        if: always() && (steps.go-tests.outcome == 'failure' || steps.startup-smoke.outcome == 'failure')
+        run: exit 1
+      - uses: actions/cache/save@v4
+        if: always() && steps.go-cache.outcome == 'success' && steps.go-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            .mieru-work/go-cache
+            .mieru-work/go-modules
+            native/mieru/build
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
+      - uses: actions/cache/save@v4
+        if: always() && steps.native-cache.outcome == 'success' && steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            core-xprojects/**/build
+            submodules/*/SharedHeaders
+            submodules/telegram-ios/submodules/*/SharedHeaders
+            submodules/telegram-ios/submodules/MTProtoRustEngine/MTProtoEngineFFI.xcframework
+            packages/WalletEngine/wallet_engineFFI.xcframework
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.rustup/toolchains
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+      - uses: actions/cache/save@v4
+        if: always() && env.MIERU_SQLITE_DIAGNOSTICS_ONLY != '1' && steps.swift-cache.outcome == 'success' && steps.swift-cache.outputs.cache-hit != 'true'
+        env:
+          PATH: ${{ env.MIERU_CACHE_TOOL_PATH }}
+        with:
+          path: |
+            .mieru-work/DerivedData/Build/Intermediates.noindex
+            .mieru-work/DerivedData/ModuleCache.noindex
+            .mieru-work/DerivedData/CompilationCache.noindex
+            .mieru-work/DerivedData/Build/Products/**/*.o
+            .mieru-work/DerivedData/Build/Products/**/*.a
+            .mieru-work/DerivedData/Build/Products/**/*.h
+            .mieru-work/DerivedData/Build/Products/**/*.modulemap
+            .mieru-work/DerivedData/Build/Products/**/*.swiftmodule
+            .mieru-work/DerivedData/Build/Products/**/*.swiftinterface
+            .mieru-work/DerivedData/Build/Products/**/*.swiftdoc
+            .mieru-work/DerivedData/Build/Products/**/*.swiftsourceinfo
+            .mieru-work/DerivedData/Build/Products/**/*.abi.json
+            packages/MieruTransport/.build
+          key: ${{ steps.swift-cache.outputs.cache-primary-key }}
+      - uses: actions/cache/save@v4
+        if: always() && env.MIERU_SQLITE_DIAGNOSTICS_ONLY != '1' && steps.package-cache.outcome == 'success' && steps.package-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            .mieru-work/DerivedData/SourcePackages
+            ~/Library/Caches/org.swift.swiftpm/manifests
+          key: ${{ steps.package-cache.outputs.cache-primary-key }}

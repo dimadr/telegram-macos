@@ -1,4 +1,5 @@
 import Cocoa
+import MieruTransport
 import Postbox
 import TelegramCore
 import InAppSettings
@@ -1623,6 +1624,11 @@ public final class PresentationGroupCallImpl: PresentationGroupCall {
     }
     
     private func updateSessionState(internalState: InternalState) {
+        if MieruRuntime.shared.enabled {
+            MieruRuntime.shared.report(MieruError.unsupported.message)
+            self.markAsCanBeRemoved()
+            return
+        }
         guard !self.leaving && !self.markedAsCanBeRemoved else {
             return
         }
@@ -3009,6 +3015,7 @@ public final class PresentationGroupCallImpl: PresentationGroupCall {
     public var mustStopVideo:(()->Void)?
     
     public func requestScreencast(deviceId: OngoingCallVideoCapturer, source: VideoSourceMac) {
+        guard !MieruRuntime.shared.enabled else { return }
         guard !self.leaving, !self.markedAsCanBeRemoved, self.screencastCallContext == nil, let callInfo = self.internalState.callInfo else {
             return
         }
@@ -3296,6 +3303,11 @@ public final class PresentationGroupCallImpl: PresentationGroupCall {
     }
     
     private func requestCall(movingFromBroadcastToRtc: Bool) {
+        if MieruRuntime.shared.enabled {
+            MieruRuntime.shared.report(MieruError.unsupported.message)
+            self.markAsCanBeRemoved()
+            return
+        }
         guard !self.leaving && !self.markedAsCanBeRemoved else {
             return
         }
